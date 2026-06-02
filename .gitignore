@@ -1,0 +1,6 @@
+*.o
+*.a
+/test/hcl2_test
+*.profraw
+*.profdata
+*.dSYM/
