@@ -11,7 +11,7 @@ TEST_CFLAGS += -fsanitize=$(SANITIZE)
 endif
 COVER_CFLAGS = $(TEST_CFLAGS) -fprofile-instr-generate -fcoverage-mapping
 
-SRCS := value.c hcl2.c
+SRCS := value.c lexer.c parser.c eval.c
 OBJS := $(SRCS:.c=.o)
 
 all: libhcl2.a
