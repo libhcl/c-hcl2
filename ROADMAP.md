@@ -64,5 +64,8 @@ this is built milestone by milestone.
 - ✅ allocation fault-injection in tests (`HCL2_FAULT_INJECT` budget hook in
   `hcl2_alloc.h`, shared by all TUs) + an OOM-scan harness: **100% functions**,
   ~90% lines, clean under ASan on every injected out-of-memory path
-- ⬜ fuzzing the lexer/parser
+- ✅ fuzzing the lexer/parser: `make fuzz` (deterministic, fixed-seed; random /
+  token-soup / seed-mutation inputs into hcl2_eval + hcl2_parse, exact-length
+  buffers so ASan catches over-reads). Clean over millions of iterations across
+  several seeds.
 - ⬜ push line coverage further (the remaining ~10% are deep OOM/error edges)

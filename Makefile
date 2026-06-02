@@ -39,6 +39,15 @@ cover:
 	$(LLVM_PROFDATA) merge -sparse hcl2.profraw -o hcl2.profdata
 	$(LLVM_COV) report ./test/hcl2_test -instr-profile=hcl2.profdata $(SRCS)
 
+# Deterministic fuzzer (fixed seed -> reproducible). Best run under ASan:
+#   make fuzz SANITIZE=address          # ITERS iterations (default 200000)
+#   make fuzz ITERS=5000000 SANITIZE=address
+ITERS ?= 200000
+.PHONY: fuzz
+fuzz:
+	$(CC) $(TEST_CFLAGS) $(SRCS) test/fuzz.c $(LDLIBS) -o test/fuzz
+	./test/fuzz $(ITERS)
+
 install: libhcl2.a
 	install -d "$(DESTDIR)$(PREFIX)/lib" "$(DESTDIR)$(PREFIX)/include"
 	install -m644 libhcl2.a "$(DESTDIR)$(PREFIX)/lib/"
@@ -46,5 +55,5 @@ install: libhcl2.a
 
 .PHONY: clean
 clean:
-	rm -f *.o *.a test/hcl2_test *.profraw *.profdata
+	rm -f *.o *.a test/hcl2_test test/fuzz *.profraw *.profdata
 	rm -rf *.dSYM test/*.dSYM
