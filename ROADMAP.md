@@ -44,12 +44,15 @@ this is built milestone by milestone.
   as the trailing arguments. (String indexing is not part of HCL — strings are
   scalars in the `cty`-lite model — so it is intentionally absent.)
 
-## M4 — type system & diagnostics
+## M4 — type system & diagnostics (started)
 
-- the `cty` type system: list/set/map vs tuple/object distinctions,
+- ⬜ the `cty` type system: list/set/map vs tuple/object distinctions,
   type constraints and conversions, **unknown** values
-- richer numbers (big.Float semantics) instead of `double`
-- source-range diagnostics (line/column spans), multiple errors
+- ⬜ richer numbers (big.Float semantics) instead of `double`
+- 🟡 source-range diagnostics: syntax (lex/parse) errors now report
+  `at line L, column C` (computed from the offending token's offset). *Not yet:*
+  positions on semantic/eval errors (needs source spans on AST nodes), and
+  collecting multiple errors per parse.
 
 ## M5 — HCL JSON profile
 

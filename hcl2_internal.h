@@ -71,6 +71,8 @@ enum tok {
 };
 struct lexer {
   const char *p, *end;
+  const char *start;  /* source begin, for line/column diagnostics */
+  const char *tokpos; /* start of the current token, for error positions */
   enum tok tok;
   char *text; /* T_NUM/T_IDENT/T_STR (raw inner for strings); owned, reused */
   size_t tlen;

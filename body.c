@@ -168,6 +168,8 @@ hcl2_doc *hcl2_parse(const char *src, size_t len, char *err, size_t errsz) {
   struct parser p = {0};
   p.lx.p = src;
   p.lx.end = src + len;
+  p.lx.start = src;
+  p.lx.tokpos = src;
   p.lx.err = err;
   p.lx.errsz = errsz;
   lex(&p.lx);

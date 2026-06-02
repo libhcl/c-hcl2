@@ -14,8 +14,21 @@
 /* enum tok / struct lexer live in hcl2_internal.h. */
 
 void lx_err(struct lexer *l, const char *m) {
-  if (l->err && l->errsz && l->err[0] == '\0')
+  if (!(l->err && l->errsz && l->err[0] == '\0'))
+    return;
+  if (l->start != NULL && l->tokpos != NULL) {
+    int line = 1;
+    const char *bol = l->start; /* beginning of the offending line */
+    for (const char *q = l->start; q < l->tokpos; q++)
+      if (*q == '\n') {
+        line++;
+        bol = q + 1;
+      }
+    snprintf(l->err, l->errsz, "hcl2: %s at line %d, column %d", m, line,
+             (int)(l->tokpos - bol) + 1);
+  } else {
     snprintf(l->err, l->errsz, "hcl2: %s", m);
+  }
 }
 static bool settext(struct lexer *l, const char *s, size_t n) {
   char *t = realloc(l->text, n + 1);
@@ -157,6 +170,7 @@ void lex(struct lexer *l) {
     }
     break;
   }
+  l->tokpos = l->p; /* token starts here, for error positions */
   if (l->p >= l->end) {
     l->tok = T_EOF;
     return;

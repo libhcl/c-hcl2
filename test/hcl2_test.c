@@ -179,6 +179,28 @@ int main(void) {
   check("err unterminated string", fails("\"abc", NULL));
   check("err unterminated interp", fails("\"a${1+1\"", NULL));
 
+  /* M4 (partial): line/column diagnostics on syntax errors */
+  {
+    char err[256] = "";
+    hcl2_value *v = hcl2_eval("1 + )", 5, NULL, err, sizeof(err));
+    check("diag expr null", v == NULL);
+    check("diag expr line/col", strstr(err, "line 1, column 5") != NULL);
+  }
+  {
+    char err[256] = "";
+    const char *src = "a = 1\nb = 2\nc = )\n";
+    hcl2_doc *d = hcl2_parse(src, strlen(src), err, sizeof(err));
+    check("diag doc null", d == NULL);
+    check("diag doc line 3", strstr(err, "line 3, column 5") != NULL);
+    hcl2_doc_free(d);
+  }
+  {
+    char err[256] = "";
+    hcl2_value *v = hcl2_eval("\"unterminated", 13, NULL, err, sizeof(err));
+    check("diag string null", v == NULL);
+    check("diag string col 1", strstr(err, "line 1, column 1") != NULL);
+  }
+
   /* misc public API surface */
   {
     hcl2_value *n = ev("null", NULL);

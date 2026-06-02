@@ -807,6 +807,8 @@ hcl2_value *hcl2_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, siz
   struct parser p = {0};
   p.lx.p = src;
   p.lx.end = src + len;
+  p.lx.start = src;
+  p.lx.tokpos = src;
   p.lx.err = err;
   p.lx.errsz = errsz;
   lex(&p.lx);
