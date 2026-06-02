@@ -21,7 +21,7 @@
  * `&& ||`, the conditional `cond ? a : b`, parentheses, variable references
  * with `.attr` / `[index]` traversal, and function calls against a context;
  * plus document bodies via hcl2_parse (see the "configuration bodies" section
- * below) with #, //, and `/* */` comments.
+ * below), with hash, line, and block comments.
  */
 
 typedef enum {
