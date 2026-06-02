@@ -322,7 +322,7 @@ void lex(struct lexer *l) {
     const char *start = l->p;
     while (l->p < l->end && (isdigit((unsigned char)*l->p) || *l->p == '.' || *l->p == 'e' ||
                              *l->p == 'E' || *l->p == '+' || *l->p == '-')) {
-      /* a '.' followed by another '.' is never part of a number — it begins a
+      /* a '.' followed by another '.' is never part of a number -- it begins a
          `...` spread, e.g. `xs[5]...` or `5...` */
       if (*l->p == '.' && l->p + 1 < l->end && l->p[1] == '.')
         break;
