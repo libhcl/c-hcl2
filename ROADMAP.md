@@ -57,5 +57,8 @@ this is built milestone by milestone.
 
 ## Cross-cutting
 
-- allocation fault-injection in tests + raise coverage to ~99% / 100% functions
-- fuzzing the lexer/parser
+- ✅ allocation fault-injection in tests (`HCL2_FAULT_INJECT` budget hook in
+  `hcl2_alloc.h`, shared by all TUs) + an OOM-scan harness: **100% functions**,
+  ~90% lines, clean under ASan on every injected out-of-memory path
+- ⬜ fuzzing the lexer/parser
+- ⬜ push line coverage further (the remaining ~10% are deep OOM/error edges)

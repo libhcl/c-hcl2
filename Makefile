@@ -5,7 +5,7 @@ LDLIBS ?= -lm
 SANITIZE ?=
 LLVM_PROFDATA ?= llvm-profdata
 LLVM_COV ?= llvm-cov
-TEST_CFLAGS := -I. -O0 -g -Wall -Wextra -pedantic
+TEST_CFLAGS := -I. -O0 -g -Wall -Wextra -pedantic -DHCL2_FAULT_INJECT
 ifneq ($(strip $(SANITIZE)),)
 TEST_CFLAGS += -fsanitize=$(SANITIZE)
 endif

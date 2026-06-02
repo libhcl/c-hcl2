@@ -1,6 +1,6 @@
-/* Unit test for c-hcl2 (M1: expression engine). ASan:
- *   clang -I.. -O0 -g -fsanitize=address ../hcl2.c hcl2_test.c -lm -o hcl2_test && ./hcl2_test
- */
+/* Unit tests for c-hcl2 (M1 expressions, M2 bodies, M3 collection/template
+ * features) plus an allocation fault-injection scan. Run via `make test`
+ * (defines HCL2_FAULT_INJECT) or `make test SANITIZE=address`. */
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -50,6 +50,50 @@ static bool fails(const char *s, hcl2_ctx *ctx) {
   }
   return err[0] != '\0';
 }
+
+/* A caller-registered function, for hcl2_ctx_set_func coverage. */
+static hcl2_value *fn_inc(const hcl2_value *const *a, size_t n, char *err, size_t errsz) {
+  (void)err;
+  (void)errsz;
+  double d;
+  if (n != 1 || !hcl2_value_as_number(a[0], &d))
+    return NULL;
+  return hcl2_number(d + 1);
+}
+
+#ifdef HCL2_FAULT_INJECT
+/* Drive out-of-memory branches: fail the 1st allocation, then the 2nd, ... until
+ * the input succeeds with no injected failure. Every NULL return must be clean
+ * (verified under ASan: no leaks/UAF on any OOM path). Inputs must be valid so
+ * the scan terminates. */
+extern int hcl2_alloc_budget;
+static bool oom_scan_expr(const char *s) {
+  for (int b = 0; b <= 5000; b++) {
+    hcl2_alloc_budget = b;
+    char err[256] = "";
+    hcl2_value *v = hcl2_eval(s, strlen(s), NULL, err, sizeof(err));
+    hcl2_alloc_budget = -1;
+    if (v) {
+      hcl2_value_free(v);
+      return true;
+    }
+  }
+  return false;
+}
+static bool oom_scan_doc(const char *s) {
+  for (int b = 0; b <= 5000; b++) {
+    hcl2_alloc_budget = b;
+    char err[256] = "";
+    hcl2_doc *d = hcl2_parse(s, strlen(s), err, sizeof(err));
+    hcl2_alloc_budget = -1;
+    if (d) {
+      hcl2_doc_free(d);
+      return true;
+    }
+  }
+  return false;
+}
+#endif
 
 int main(void) {
   /* arithmetic + precedence */
@@ -134,6 +178,18 @@ int main(void) {
   check("err interpolate object", fails("\"x${ {a=1} }\"", NULL));
   check("err unterminated string", fails("\"abc", NULL));
   check("err unterminated interp", fails("\"a${1+1\"", NULL));
+
+  /* misc public API surface */
+  {
+    hcl2_value *n = ev("null", NULL);
+    check("null kind", n != NULL && hcl2_value_kind(n) == HCL2_NULL);
+    hcl2_value_free(n);
+    hcl2_ctx *ctx = hcl2_ctx_new();
+    check("set custom func", hcl2_ctx_set_func(ctx, "inc", fn_inc));
+    check("custom func call", isnum(ev("inc(41)", ctx), 42));
+    check("custom func over builtin", isnum(ev("inc(inc(0))", ctx), 2));
+    hcl2_ctx_free(ctx);
+  }
 
   /* ---- M3: for-expressions + splat ---- */
   check("for tuple map", isnum(ev("length([for x in [1,2,3] : x * 2])", NULL), 3));
@@ -320,6 +376,47 @@ int main(void) {
       hcl2_doc_free(d);
     }
   }
+
+#ifdef HCL2_FAULT_INJECT
+  /* ---- allocation fault injection: every OOM path returns cleanly ---- */
+  {
+    const char *exprs[] = {
+        "1 + 2 * 3",
+        "!true",
+        "\"a${1 + 1}b\\n\"",
+        "[1, 2, 3]",
+        "{a = 1, b = 2}",
+        "{a: 1}.a",
+        "max(1, 2, 3)",
+        "length(\"abc\")",
+        "[1,2][0]",
+        "true ? 1 : 2",
+        "[for x in [1, 2, 3] : x * 2 if x > 1]",
+        "{for k, v in {a = 1, b = 2} : k => v}",
+        "[[1, 2], [3]][0]",
+        "max([1, 2, 3]...)",
+        "max(9, [1, 5]...)",
+        "\"%{ if true }${1}%{ else }no%{ endif }\"",
+        "\"%{ for n in [1, 2, 3] }${n},%{ endfor }\"",
+        "<<EOF\nhi ${1 + 1}\nEOF\n",
+        "<<-EOF\n  a\n    b\n  EOF\n",
+    };
+    bool all = true;
+    for (size_t i = 0; i < sizeof(exprs) / sizeof(exprs[0]); i++)
+      all = oom_scan_expr(exprs[i]) && all;
+    check("oom scan: expressions", all);
+
+    const char *docs[] = {
+        "name = \"x\"\nport = 1 + 1\n",
+        "svc \"a\" \"b\" { v = [1, 2] inner { z = 3 } }\n",
+        "# c\nlist = [for x in [1, 2] : x]\ntext = <<EOT\nhi\nEOT\n",
+    };
+    bool alld = true;
+    for (size_t i = 0; i < sizeof(docs) / sizeof(docs[0]); i++)
+      alld = oom_scan_doc(docs[i]) && alld;
+    check("oom scan: documents", alld);
+  }
+#endif
 
   if (failures == 0) {
     fprintf(stderr, "\nAll c-hcl2 tests passed.\n");

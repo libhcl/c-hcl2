@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "hcl2.h"
+#include "hcl2_alloc.h"
 #include "hcl2_internal.h"
 
 /* ===========================================================================
@@ -316,16 +317,24 @@ static struct node *parse_primary(struct parser *p) {
         node_free(x);
         return NULL;
       }
+      /* Grow each array and assign back immediately, so x always owns valid
+         buffers -- otherwise a failed second realloc would leave x->items
+         dangling for node_free(x). */
       struct node **ni = realloc(x->items, (x->n + 1) * sizeof(*ni));
-      char **nk = realloc(x->keys, (x->n + 1) * sizeof(*nk));
-      if (!ni || !nk) {
+      if (!ni) {
         free(key);
         node_free(val);
         node_free(x);
-        free(ni == NULL ? NULL : ni); /* best-effort */
         return NULL;
       }
       x->items = ni;
+      char **nk = realloc(x->keys, (x->n + 1) * sizeof(*nk));
+      if (!nk) {
+        free(key);
+        node_free(val);
+        node_free(x);
+        return NULL;
+      }
       x->keys = nk;
       x->keys[x->n] = key;
       x->items[x->n] = val;

@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "hcl2.h"
+#include "hcl2_alloc.h"
 #include "hcl2_internal.h"
 
 /* ===========================================================================

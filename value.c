@@ -4,7 +4,12 @@
 #include <string.h>
 
 #include "hcl2.h"
+#include "hcl2_alloc.h"
 #include "hcl2_internal.h"
+
+#ifdef HCL2_FAULT_INJECT
+int hcl2_alloc_budget = -1; /* storage; wrappers + macros live in hcl2_alloc.h */
+#endif
 
 /* ===========================================================================
  * Value model
