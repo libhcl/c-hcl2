@@ -64,74 +64,365 @@ static bool val_to_text(const hcl2_value *v, struct sbuf *s, char *err, size_t e
 
 hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz);
 
-/* Evaluate a string template (raw inner bytes). When `heredoc` is true the body
- * is a heredoc: backslash escapes are kept literal (only `${ }` / `$${` are
- * interpreted), matching HCL's template semantics. */
-static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *err,
-                                 size_t errsz) {
-  struct sbuf s = {0};
-  const char *p = raw, *end = raw + strlen(raw);
-  while (p < end) {
-    if (p[0] == '$' && p + 1 < end && p[1] == '{') {
-      /* find matching '}' with brace depth */
-      const char *s0 = p + 2;
-      const char *q = s0;
-      int depth = 1;
-      while (q < end && depth > 0) {
-        if (*q == '{')
-          depth++;
-        else if (*q == '}')
-          depth--;
-        if (depth == 0)
-          break;
-        q++;
+/* ---------------------------------------------------------------------------
+ * Template engine: text with `${ expr }` interpolation, `$${` / `%%{` escapes,
+ * and `%{ if }` / `%{ for }` control directives (M3). It is a small recursive
+ * renderer; `active` lets an inactive branch (a false `if`, an empty `for`) be
+ * traversed structurally without emitting output or evaluating expressions.
+ * ------------------------------------------------------------------------- */
+enum dirstop { STOP_END, STOP_ELSE, STOP_ENDIF, STOP_ENDFOR };
+
+struct trender {
+  const char *p, *end;
+  bool heredoc; /* keep backslashes literal */
+  bool active;  /* emit + evaluate, or traverse structurally */
+  hcl2_ctx *ctx;
+  char *err;
+  size_t errsz;
+  bool fail;
+};
+
+/* From s0 (just past an opening '{'), return the matching '}' or NULL. */
+static const char *brace_match(const char *s0, const char *end) {
+  const char *q = s0;
+  int depth = 1;
+  while (q < end) {
+    if (*q == '{')
+      depth++;
+    else if (*q == '}' && --depth == 0)
+      return q;
+    q++;
+  }
+  return NULL;
+}
+
+/* Advance past the next '}' (closing a directive's `%{ ... }`). */
+static void skip_to_brace(struct trender *t) {
+  const char *close = brace_match(t->p, t->end);
+  if (close == NULL) {
+    everr(t->err, t->errsz, "unterminated %{ } directive");
+    t->fail = true;
+    return;
+  }
+  t->p = close + 1;
+}
+
+/* Read an identifier (skipping leading spaces); returns a malloc'd copy or NULL. */
+static char *dir_ident(struct trender *t) {
+  while (t->p < t->end && isspace((unsigned char)*t->p))
+    t->p++;
+  const char *s0 = t->p;
+  if (t->p < t->end && (isalpha((unsigned char)*t->p) || *t->p == '_')) {
+    t->p++;
+    while (t->p < t->end && (isalnum((unsigned char)*t->p) || *t->p == '_' || *t->p == '-'))
+      t->p++;
+  }
+  size_t n = (size_t)(t->p - s0);
+  if (n == 0)
+    return NULL;
+  char *id = malloc(n + 1);
+  if (id == NULL)
+    return NULL;
+  memcpy(id, s0, n);
+  id[n] = '\0';
+  return id;
+}
+
+static void trender(struct trender *t, struct sbuf *s, enum dirstop *stop);
+
+static void handle_if(struct trender *t, struct sbuf *s) {
+  const char *close = brace_match(t->p, t->end); /* the directive's own '{' */
+  if (close == NULL) {
+    everr(t->err, t->errsz, "unterminated %{ if } directive");
+    t->fail = true;
+    return;
+  }
+  bool cond = false;
+  if (t->active) {
+    hcl2_value *c = hcl2_eval(t->p, (size_t)(close - t->p), t->ctx, t->err, t->errsz);
+    if (c == NULL) {
+      t->fail = true;
+      return;
+    }
+    if (c->kind != HCL2_BOOL) {
+      everr(t->err, t->errsz, "%{ if } condition must be a boolean");
+      hcl2_value_free(c);
+      t->fail = true;
+      return;
+    }
+    cond = c->b;
+    hcl2_value_free(c);
+  }
+  t->p = close + 1;
+  bool save = t->active;
+  enum dirstop stop;
+  t->active = save && cond;
+  trender(t, s, &stop);
+  if (t->fail)
+    return;
+  if (stop == STOP_ELSE) {
+    t->active = save && !cond;
+    trender(t, s, &stop);
+    if (t->fail)
+      return;
+  }
+  t->active = save;
+  if (stop != STOP_ENDIF) {
+    everr(t->err, t->errsz, "%{ if } without matching %{ endif }");
+    t->fail = true;
+  }
+}
+
+static void handle_for(struct trender *t, struct sbuf *s) {
+  char *kvar = NULL, *vvar = dir_ident(t);
+  if (vvar == NULL) {
+    everr(t->err, t->errsz, "expected a variable in %{ for }");
+    t->fail = true;
+    return;
+  }
+  while (t->p < t->end && isspace((unsigned char)*t->p))
+    t->p++;
+  if (t->p < t->end && *t->p == ',') {
+    t->p++;
+    kvar = vvar;
+    vvar = dir_ident(t);
+    if (vvar == NULL) {
+      free(kvar);
+      everr(t->err, t->errsz, "expected a second variable in %{ for }");
+      t->fail = true;
+      return;
+    }
+  }
+  char *inkw = dir_ident(t);
+  bool bad_in = (inkw == NULL || strcmp(inkw, "in") != 0);
+  free(inkw);
+  if (bad_in) {
+    free(kvar);
+    free(vvar);
+    everr(t->err, t->errsz, "expected 'in' in %{ for }");
+    t->fail = true;
+    return;
+  }
+  const char *close = brace_match(t->p, t->end);
+  if (close == NULL) {
+    free(kvar);
+    free(vvar);
+    everr(t->err, t->errsz, "unterminated %{ for } directive");
+    t->fail = true;
+    return;
+  }
+  const char *exprS = t->p;
+  size_t exprN = (size_t)(close - t->p);
+  t->p = close + 1;
+  const char *bodyStart = t->p;
+  enum dirstop stop = STOP_ENDFOR;
+
+  if (!t->active) { /* traverse the body once, structurally */
+    trender(t, s, &stop);
+    free(kvar);
+    free(vvar);
+    if (!t->fail && stop != STOP_ENDFOR) {
+      everr(t->err, t->errsz, "%{ for } without matching %{ endfor }");
+      t->fail = true;
+    }
+    return;
+  }
+
+  hcl2_value *coll = hcl2_eval(exprS, exprN, t->ctx, t->err, t->errsz);
+  if (coll == NULL) {
+    free(kvar);
+    free(vvar);
+    t->fail = true;
+    return;
+  }
+  if (coll->kind != HCL2_TUPLE && coll->kind != HCL2_OBJECT) {
+    everr(t->err, t->errsz, "%{ for } requires a tuple or object");
+    hcl2_value_free(coll);
+    free(kvar);
+    free(vvar);
+    t->fail = true;
+    return;
+  }
+  /* loop vars need a context to bind into; synthesize one if none was given */
+  hcl2_ctx *prevctx = t->ctx;
+  hcl2_ctx *tmp = NULL;
+  if (t->ctx == NULL) {
+    tmp = hcl2_ctx_new();
+    if (tmp == NULL) {
+      hcl2_value_free(coll);
+      free(kvar);
+      free(vvar);
+      t->fail = true;
+      return;
+    }
+    t->ctx = tmp;
+  }
+  hcl2_value *saved_v = ctx_take_var(t->ctx, vvar);
+  hcl2_value *saved_k = kvar ? ctx_take_var(t->ctx, kvar) : NULL;
+  size_t count = (coll->kind == HCL2_TUPLE) ? coll->n : coll->nf;
+
+  if (count == 0) { /* still traverse the body once to consume %{ endfor } */
+    t->active = false;
+    trender(t, s, &stop);
+    t->active = true;
+  } else {
+    for (size_t i = 0; i < count && !t->fail; i++) {
+      hcl2_value *vval, *kval = NULL;
+      if (coll->kind == HCL2_TUPLE) {
+        vval = vclone(coll->items[i]);
+        if (kvar)
+          kval = hcl2_number((double)i);
+      } else {
+        vval = vclone(coll->fields[i].val);
+        if (kvar)
+          kval = hcl2_string(coll->fields[i].key);
       }
-      if (depth != 0) {
-        everr(err, errsz, "unterminated ${ ... } in template");
-        free(s.p);
-        return NULL;
+      if (vval == NULL || (kvar && kval == NULL) || !hcl2_ctx_set_var(t->ctx, vvar, vval)) {
+        hcl2_value_free(vval);
+        hcl2_value_free(kval);
+        t->fail = true;
+        break;
       }
-      hcl2_value *iv = hcl2_eval(s0, (size_t)(q - s0), ctx, err, errsz);
-      if (iv == NULL) {
-        free(s.p);
-        return NULL;
+      if (kvar && !hcl2_ctx_set_var(t->ctx, kvar, kval)) {
+        hcl2_value_free(kval);
+        t->fail = true;
+        break;
       }
-      bool ok = val_to_text(iv, &s, err, errsz);
-      hcl2_value_free(iv);
-      if (!ok) {
-        free(s.p);
-        return NULL;
-      }
-      p = q + 1;
+      t->p = bodyStart;
+      trender(t, s, &stop);
+    }
+  }
+  /* restore shadowed scope */
+  hcl2_value_free(ctx_take_var(t->ctx, vvar));
+  if (saved_v != NULL)
+    hcl2_ctx_set_var(t->ctx, vvar, saved_v);
+  if (kvar != NULL) {
+    hcl2_value_free(ctx_take_var(t->ctx, kvar));
+    if (saved_k != NULL)
+      hcl2_ctx_set_var(t->ctx, kvar, saved_k);
+  }
+  hcl2_ctx_free(tmp);
+  t->ctx = prevctx;
+  hcl2_value_free(coll);
+  free(kvar);
+  free(vvar);
+  if (!t->fail && stop != STOP_ENDFOR) {
+    everr(t->err, t->errsz, "%{ for } without matching %{ endfor }");
+    t->fail = true;
+  }
+}
+
+static void trender(struct trender *t, struct sbuf *s, enum dirstop *stop) {
+  *stop = STOP_END;
+  while (t->p < t->end && !t->fail) {
+    const char *p = t->p;
+    if (p[0] == '$' && p + 2 < t->end && p[1] == '$' && p[2] == '{') {
+      if (t->active)
+        sb_puts(s, "${");
+      t->p += 3;
       continue;
     }
-    if (p[0] == '$' && p + 2 < end && p[1] == '$' && p[2] == '{') {
-      sb_puts(&s, "${");
-      p += 3;
+    if (p[0] == '%' && p + 2 < t->end && p[1] == '%' && p[2] == '{') {
+      if (t->active)
+        sb_puts(s, "%{");
+      t->p += 3;
       continue;
     }
-    if (p[0] == '%' && p + 1 < end && p[1] == '{') {
-      everr(err, errsz, "template directives %{ ... } are not supported yet");
-      free(s.p);
-      return NULL;
+    if (p[0] == '$' && p + 1 < t->end && p[1] == '{') {
+      const char *close = brace_match(p + 2, t->end);
+      if (close == NULL) {
+        everr(t->err, t->errsz, "unterminated ${ ... } in template");
+        t->fail = true;
+        return;
+      }
+      if (t->active) {
+        hcl2_value *iv = hcl2_eval(p + 2, (size_t)(close - (p + 2)), t->ctx, t->err, t->errsz);
+        if (iv == NULL) {
+          t->fail = true;
+          return;
+        }
+        bool ok = val_to_text(iv, s, t->err, t->errsz);
+        hcl2_value_free(iv);
+        if (!ok) {
+          t->fail = true;
+          return;
+        }
+      }
+      t->p = close + 1;
+      continue;
     }
-    if (!heredoc && p[0] == '\\' && p + 1 < end) {
-      char e = p[1];
-      char ch = e;
+    if (p[0] == '%' && p + 1 < t->end && p[1] == '{') {
+      t->p += 2;
+      while (t->p < t->end && isspace((unsigned char)*t->p))
+        t->p++;
+      const char *ks = t->p;
+      while (t->p < t->end && isalpha((unsigned char)*t->p))
+        t->p++;
+      size_t kn = (size_t)(t->p - ks);
+      if (kn == 2 && memcmp(ks, "if", 2) == 0) {
+        handle_if(t, s);
+      } else if (kn == 3 && memcmp(ks, "for", 3) == 0) {
+        handle_for(t, s);
+      } else if (kn == 4 && memcmp(ks, "else", 4) == 0) {
+        skip_to_brace(t);
+        *stop = STOP_ELSE;
+        return;
+      } else if (kn == 5 && memcmp(ks, "endif", 5) == 0) {
+        skip_to_brace(t);
+        *stop = STOP_ENDIF;
+        return;
+      } else if (kn == 6 && memcmp(ks, "endfor", 6) == 0) {
+        skip_to_brace(t);
+        *stop = STOP_ENDFOR;
+        return;
+      } else {
+        everr(t->err, t->errsz, "unknown %{ } template directive");
+        t->fail = true;
+        return;
+      }
+      continue;
+    }
+    if (!t->heredoc && p[0] == '\\' && p + 1 < t->end) {
+      char e = p[1], ch = e;
       if (e == 'n')
         ch = '\n';
       else if (e == 't')
         ch = '\t';
       else if (e == 'r')
         ch = '\r';
-      sb_putc(&s, ch);
-      p += 2;
+      if (t->active)
+        sb_putc(s, ch);
+      t->p += 2;
       continue;
     }
-    sb_putc(&s, *p);
-    p++;
+    if (t->active)
+      sb_putc(s, *p);
+    t->p++;
   }
-  if (s.oom) {
+}
+
+/* Evaluate a string template (raw inner bytes). When `heredoc` is true the body
+ * is a heredoc: backslash escapes are kept literal (only `${ }` / `$${` and the
+ * `%{ }` directives are interpreted), matching HCL's template semantics. */
+static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *err,
+                                 size_t errsz) {
+  struct sbuf s = {0};
+  struct trender t = {.p = raw,
+                      .end = raw + strlen(raw),
+                      .heredoc = heredoc,
+                      .active = true,
+                      .ctx = ctx,
+                      .err = err,
+                      .errsz = errsz,
+                      .fail = false};
+  enum dirstop stop;
+  trender(&t, &s, &stop);
+  if (t.fail || s.oom) {
+    free(s.p);
+    return NULL;
+  }
+  if (stop != STOP_END) {
+    everr(err, errsz, "stray %{ else/endif/endfor } in template");
     free(s.p);
     return NULL;
   }

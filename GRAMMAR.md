@@ -232,6 +232,23 @@ during parsing:
 
 A plain string with no `${` is just its literal (escaped) text.
 
+### Template directives (M3)
+
+Inside a template, `%{ ... }` blocks insert control flow (and `%%{` is the
+literal-escape for `%{`, mirroring `$${`):
+
+```
+%{ if cond }...%{ else }...%{ endif }       (* else is optional *)
+%{ for v in coll }...%{ endfor }
+%{ for k, v in coll }...%{ endfor }
+```
+
+`cond` must evaluate to a boolean; `coll` to a tuple or object (the `k, v` form
+binds the index/key and the value). Directives nest, and `${ }` interpolation
+works inside their bodies. The body of an inactive branch (a false `if`, an
+empty `for`) is traversed structurally but not evaluated or emitted. Loop
+variables are scoped to the `for` body and restored afterwards.
+
 ### Heredocs (M3)
 
 A heredoc introduces a multi-line template:

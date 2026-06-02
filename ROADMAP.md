@@ -38,7 +38,8 @@ this is built milestone by milestone.
   trailers after a splat (`xs[*][0]`) or chained splats (`xs[*].a[*]`).
 - ✅ heredocs `<<EOF` and indented `<<-EOF` (common-leading-whitespace strip);
   the body is a template (honours `${ }`) but keeps backslashes literal
-- ⬜ `%{ for }` / `%{ if }` template directives
+- ✅ `%{ if }` / `%{ else }` / `%{ endif }` and `%{ for }` / `%{ endfor }`
+  template directives (nestable; `$${` and `%%{` escapes)
 - ⬜ string-index, `...` (variadic) call expansion
 
 ## M4 — type system & diagnostics

@@ -189,6 +189,30 @@ int main(void) {
     hcl2_doc_free(doc);
   }
 
+  /* ---- M3: template directives %{ if } / %{ for } ---- */
+  check("dir if true", isstr(ev("\"%{ if true }yes%{ else }no%{ endif }\"", NULL), "yes"));
+  check("dir if false", isstr(ev("\"%{ if false }yes%{ else }no%{ endif }\"", NULL), "no"));
+  check("dir if no else", isstr(ev("\"a%{ if 1 > 2 }X%{ endif }b\"", NULL), "ab"));
+  check("dir if cond expr", isstr(ev("\"%{ if 2 > 1 }big%{ endif }\"", NULL), "big"));
+  check("dir for join", isstr(ev("\"%{ for n in [1,2,3] }${n},%{ endfor }\"", NULL), "1,2,3,"));
+  check("dir for empty", isstr(ev("\"[%{ for n in [] }${n}%{ endfor }]\"", NULL), "[]"));
+  check("dir for index var",
+        isstr(ev("\"%{ for i, n in [9,8] }${i}:${n} %{ endfor }\"", NULL), "0:9 1:8 "));
+  check("dir for object",
+        isstr(ev("\"%{ for k, v in {a=1, b=2} }${k}=${v};%{ endfor }\"", NULL), "a=1;b=2;"));
+  check(
+      "dir nested for+if",
+      isstr(ev("\"%{ for n in [1,2,3] }%{ if n == 2 }<${n}>%{ endif }%{ endfor }\"", NULL), "<2>"));
+  check("dir escaped pct", isstr(ev("\"%%{x}\"", NULL), "%{x}"));
+  check("dir for scope clean", fails("\"%{ for z in [1] }${z}%{ endfor }${z}\"", NULL));
+  check("dir err missing endif", fails("\"%{ if true }x\"", NULL));
+  check("dir err stray endif", fails("\"x%{ endif }\"", NULL));
+  check("dir err unknown", fails("\"%{ while x }y%{ endwhile }\"", NULL));
+  check("dir err if not bool", fails("\"%{ if 3 }x%{ endif }\"", NULL));
+  check("dir err for not coll", fails("\"%{ for x in 5 }y%{ endfor }\"", NULL));
+  check("dir err for missing in", fails("\"%{ for x [1] }y%{ endfor }\"", NULL));
+  check("dir err unterminated for", fails("\"%{ for x in [1] }y\"", NULL));
+
   /* ---- M2: configuration bodies ---- */
   {
     const char *src = "# a comment\n"

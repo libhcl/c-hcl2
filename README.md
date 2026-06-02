@@ -22,8 +22,9 @@ logical `&& ||`, the conditional `cond ? a : b`, parentheses, variable
 references with `.attr` / `[index]` traversal, function calls — evaluated
 against a context of variables and functions (builtins: `length`, `upper`,
 `lower`, `min`, `max`) — plus **for-expressions** (`[for x in xs : x*2 if x>0]`,
-`{for k, v in m : k => v}`), **splat** (`xs[*].name`), and **heredocs**
-(`<<EOF` / indented `<<-EOF`).
+`{for k, v in m : k => v}`), **splat** (`xs[*].name`), **heredocs**
+(`<<EOF` / indented `<<-EOF`), and **template directives**
+(`%{ if }`/`%{ else }`/`%{ endif }`, `%{ for }`/`%{ endfor }`).
 
 **Configuration bodies** (`hcl2_parse`): documents of attributes
 (`name = expr`) and nested, optionally labeled blocks (`type "label" { ... }`),
