@@ -200,6 +200,32 @@ int main(void) {
     check("diag string null", v == NULL);
     check("diag string col 1", strstr(err, "line 1, column 1") != NULL);
   }
+  /* eval-error positions (carried on AST nodes, so they survive even deferred
+     body decoding after the source buffer is gone) */
+  {
+    char err[256] = "";
+    (void)hcl2_eval("1 +\n  nope", 10, NULL, err, sizeof(err));
+    check("diag undef var pos", strstr(err, "line 2, column 3") != NULL);
+    err[0] = '\0';
+    (void)hcl2_eval("true + 1", 8, NULL, err, sizeof(err));
+    check("diag type-mismatch pos", strstr(err, "line 1, column 6") != NULL);
+    err[0] = '\0';
+    (void)hcl2_eval("{a = 1}.b", 9, NULL, err, sizeof(err));
+    check("diag no-attribute pos", strstr(err, "column") != NULL);
+  }
+  {
+    /* deferred decode: parse, then evaluate an attribute whose expression
+       references an undefined variable; the source string is a literal that is
+       no longer the lexer's buffer at eval time. */
+    char err[256] = "";
+    const char *src = "x = 1\ny = 2\nz = undef_var + 1\n";
+    hcl2_doc *d = hcl2_parse(src, strlen(src), err, sizeof(err));
+    err[0] = '\0';
+    hcl2_value *v = hcl2_body_attr_value(hcl2_doc_root(d), "z", NULL, err, sizeof(err));
+    check("diag deferred null", v == NULL);
+    check("diag deferred pos line 3", strstr(err, "line 3, column 5") != NULL);
+    hcl2_doc_free(d);
+  }
 
   /* misc public API surface */
   {

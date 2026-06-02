@@ -81,6 +81,8 @@ struct lexer {
 };
 void lx_err(struct lexer *l, const char *m);
 void lex(struct lexer *l);
+/* Line/column (1-based) of byte position `pos` within the source. */
+void lx_linecol(const struct lexer *l, const char *pos, int *line, int *col);
 
 /* --- AST + parser (parser.c) --- */
 enum nkind {
@@ -109,6 +111,7 @@ struct node {
   struct node **items; /* N_TUPLE / N_CALL args / N_OBJECT vals */
   char **keys;         /* N_OBJECT keys */
   size_t n;
+  int line, col; /* source position for eval-error diagnostics (0 = unknown) */
 };
 struct parser {
   struct lexer lx;

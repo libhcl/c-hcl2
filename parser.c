@@ -38,6 +38,11 @@ static struct node *nnew(enum nkind k) {
     x->kind = k;
   return x;
 }
+/* Record the source position `pos` on a node, for eval-error diagnostics. */
+static void stamp(struct parser *p, struct node *x, const char *pos) {
+  if (x != NULL)
+    lx_linecol(&p->lx, pos, &x->line, &x->col);
+}
 
 /* ===========================================================================
  * Parser (Pratt) -- struct parser lives in hcl2_internal.h
@@ -189,6 +194,7 @@ static struct node *parse_primary(struct parser *p) {
       lex(l);
       return x;
     }
+    const char *idpos = l->tokpos; /* position of the identifier */
     char *name = strdup(l->text);
     if (!name)
       return NULL;
@@ -200,6 +206,7 @@ static struct node *parse_primary(struct parser *p) {
         return NULL;
       }
       x->str = name;
+      stamp(p, x, idpos);
       lex(l); /* consume '(' */
       while (l->tok != T_RP) {
         struct node *arg = parse_expr(p);
@@ -239,6 +246,7 @@ static struct node *parse_primary(struct parser *p) {
       return NULL;
     }
     x->str = name;
+    stamp(p, x, idpos);
     return x;
   }
   case T_LP: {
@@ -360,6 +368,7 @@ static struct node *parse_postfix(struct parser *p) {
   struct lexer *l = &p->lx;
   for (;;) {
     if (l->tok == T_DOT) {
+      const char *dotpos = l->tokpos;
       lex(l);
       if (l->tok != T_IDENT) {
         node_free(e);
@@ -376,9 +385,11 @@ static struct node *parse_postfix(struct parser *p) {
         node_free(x);
         return NULL;
       }
+      stamp(p, x, dotpos);
       lex(l);
       e = x;
     } else if (l->tok == T_LB) {
+      const char *lbpos = l->tokpos;
       lex(l);
       if (l->tok == T_STAR) {
         /* splat: xs[*].a.b  desugars to  [for $splat in xs : $splat.a.b] */
@@ -457,6 +468,7 @@ static struct node *parse_postfix(struct parser *p) {
       }
       x->a = e;
       x->b = idx;
+      stamp(p, x, lbpos);
       e = x;
     } else {
       break;
@@ -469,6 +481,7 @@ static struct node *parse_unary(struct parser *p) {
   struct lexer *l = &p->lx;
   if (l->tok == T_MINUS || l->tok == T_NOT) {
     enum tok op = l->tok;
+    const char *oppos = l->tokpos;
     lex(l);
     struct node *e = parse_unary(p);
     if (e == NULL)
@@ -480,6 +493,7 @@ static struct node *parse_unary(struct parser *p) {
     }
     x->op = op;
     x->a = e;
+    stamp(p, x, oppos);
     return x;
   }
   return parse_postfix(p);
@@ -521,6 +535,7 @@ static struct node *parse_binary(struct parser *p, int minbp) {
     if (bp < minbp || bp == 0)
       break;
     enum tok op = l->tok;
+    const char *oppos = l->tokpos;
     lex(l);
     struct node *right = parse_binary(p, bp + 1);
     if (right == NULL) {
@@ -536,6 +551,7 @@ static struct node *parse_binary(struct parser *p, int minbp) {
     x->op = op;
     x->a = left;
     x->b = right;
+    stamp(p, x, oppos);
     left = x;
   }
   return left;

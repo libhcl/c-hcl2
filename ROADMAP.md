@@ -49,10 +49,11 @@ this is built milestone by milestone.
 - ⬜ the `cty` type system: list/set/map vs tuple/object distinctions,
   type constraints and conversions, **unknown** values
 - ⬜ richer numbers (big.Float semantics) instead of `double`
-- 🟡 source-range diagnostics: syntax (lex/parse) errors now report
-  `at line L, column C` (computed from the offending token's offset). *Not yet:*
-  positions on semantic/eval errors (needs source spans on AST nodes), and
-  collecting multiple errors per parse.
+- 🟡 source-range diagnostics: both syntax (lex/parse) **and** semantic/eval
+  errors now report `at line L, column C`. AST nodes carry the position
+  (computed at parse time), so eval errors are located even for **deferred body
+  decoding**, after the source buffer is gone. *Not yet:* full ranges (spans,
+  not just a start point) and collecting multiple errors per parse.
 
 ## M5 — HCL JSON profile
 

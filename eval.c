@@ -42,6 +42,18 @@ void everr(char *err, size_t errsz, const char *m) {
   if (err && errsz && err[0] == '\0')
     snprintf(err, errsz, "hcl2: %s", m);
 }
+/* everr with a source position (from a stamped AST node); line == 0 omits it. */
+static void everr_at(char *err, size_t errsz, const char *m, int line, int col) {
+  if (!(err && errsz && err[0] == '\0'))
+    return;
+  if (line > 0)
+    snprintf(err, errsz, "hcl2: %s at line %d, column %d", m, line, col);
+  else
+    snprintf(err, errsz, "hcl2: %s", m);
+}
+static void everr_node(char *err, size_t errsz, const char *m, const struct node *x) {
+  everr_at(err, errsz, m, x ? x->line : 0, x ? x->col : 0);
+}
 
 /* Append a scalar value's textual form for template interpolation. */
 static bool val_to_text(const hcl2_value *v, struct sbuf *s, char *err, size_t errsz) {
@@ -432,7 +444,8 @@ static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, c
   return v;
 }
 
-static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *err, size_t errsz) {
+static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *err, size_t errsz,
+                               int line, int col) {
   hcl2_value *res = NULL;
   if (op == T_EQ || op == T_NE) {
     bool eq = vequal(l, r);
@@ -441,7 +454,7 @@ static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *
   }
   if (op == T_AND || op == T_OR) {
     if (l->kind != HCL2_BOOL || r->kind != HCL2_BOOL) {
-      everr(err, errsz, "logical operators require booleans");
+      everr_at(err, errsz, "logical operators require booleans", line, col);
       goto done;
     }
     res = hcl2_bool(op == T_AND ? (l->b && r->b) : (l->b || r->b));
@@ -449,7 +462,7 @@ static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *
   }
   /* arithmetic + comparison: numbers */
   if (l->kind != HCL2_NUMBER || r->kind != HCL2_NUMBER) {
-    everr(err, errsz, "arithmetic/comparison requires numbers");
+    everr_at(err, errsz, "arithmetic/comparison requires numbers", line, col);
     goto done;
   }
   double a = l->num, b = r->num;
@@ -465,14 +478,14 @@ static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *
     break;
   case T_SLASH:
     if (b == 0) {
-      everr(err, errsz, "division by zero");
+      everr_at(err, errsz, "division by zero", line, col);
       break;
     }
     res = hcl2_number(a / b);
     break;
   case T_PCT:
     if (b == 0) {
-      everr(err, errsz, "modulo by zero");
+      everr_at(err, errsz, "modulo by zero", line, col);
       break;
     }
     res = hcl2_number(fmod(a, b));
@@ -490,7 +503,7 @@ static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *
     res = hcl2_bool(a >= b);
     break;
   default:
-    everr(err, errsz, "unknown operator");
+    everr_at(err, errsz, "unknown operator", line, col);
     break;
   }
 done:
@@ -629,7 +642,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     if (v == NULL) {
       char m[160];
       snprintf(m, sizeof(m), "undefined variable \"%s\"", x->str);
-      everr(err, errsz, m);
+      everr_node(err, errsz, m, x);
       return NULL;
     }
     return vclone(v);
@@ -642,7 +655,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     if (f == NULL) {
       char m[160];
       snprintf(m, sizeof(m), "no attribute \"%s\"", x->str);
-      everr(err, errsz, m);
+      everr_node(err, errsz, m, x);
       hcl2_value_free(o);
       return NULL;
     }
@@ -668,7 +681,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
       f = hcl2_value_get(base, idx->str);
     }
     if (f == NULL)
-      everr(err, errsz, "index out of range or wrong key/type");
+      everr_node(err, errsz, "index out of range or wrong key/type", x);
     hcl2_value *res = f ? vclone(f) : NULL;
     hcl2_value_free(base);
     hcl2_value_free(idx);
@@ -684,7 +697,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     else if (x->op == T_NOT && e->kind == HCL2_BOOL)
       res = hcl2_bool(!e->b);
     else
-      everr(err, errsz, "unary operator type mismatch");
+      everr_node(err, errsz, "unary operator type mismatch", x);
     hcl2_value_free(e);
     return res;
   }
@@ -697,7 +710,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
       hcl2_value_free(l);
       return NULL;
     }
-    return eval_binary(x->op, l, r, err, errsz);
+    return eval_binary(x->op, l, r, err, errsz, x->line, x->col);
   }
   case N_COND: {
     hcl2_value *c = hcl2_eval_node(x->a, ctx, err, errsz);
@@ -747,7 +760,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     if (fn == NULL) {
       char m[160];
       snprintf(m, sizeof(m), "unknown function \"%s\"", x->str);
-      everr(err, errsz, m);
+      everr_node(err, errsz, m, x);
       return NULL;
     }
     hcl2_value **args = x->n ? calloc(x->n, sizeof(*args)) : NULL;

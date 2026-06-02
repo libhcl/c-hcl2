@@ -13,19 +13,25 @@
  * ===========================================================================*/
 /* enum tok / struct lexer live in hcl2_internal.h. */
 
+void lx_linecol(const struct lexer *l, const char *pos, int *line, int *col) {
+  int ln = 1;
+  const char *bol = l->start; /* beginning of the line containing pos */
+  for (const char *q = l->start; q != NULL && q < pos; q++)
+    if (*q == '\n') {
+      ln++;
+      bol = q + 1;
+    }
+  *line = ln;
+  *col = (l->start != NULL && pos != NULL) ? (int)(pos - bol) + 1 : 0;
+}
+
 void lx_err(struct lexer *l, const char *m) {
   if (!(l->err && l->errsz && l->err[0] == '\0'))
     return;
   if (l->start != NULL && l->tokpos != NULL) {
-    int line = 1;
-    const char *bol = l->start; /* beginning of the offending line */
-    for (const char *q = l->start; q < l->tokpos; q++)
-      if (*q == '\n') {
-        line++;
-        bol = q + 1;
-      }
-    snprintf(l->err, l->errsz, "hcl2: %s at line %d, column %d", m, line,
-             (int)(l->tokpos - bol) + 1);
+    int line, col;
+    lx_linecol(l, l->tokpos, &line, &col);
+    snprintf(l->err, l->errsz, "hcl2: %s at line %d, column %d", m, line, col);
   } else {
     snprintf(l->err, l->errsz, "hcl2: %s", m);
   }
