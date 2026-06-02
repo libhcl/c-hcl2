@@ -17,9 +17,11 @@ void node_free(struct node *x) {
     return;
   hcl2_value_free(x->lit);
   free(x->str);
+  free(x->kvar);
   node_free(x->a);
   node_free(x->b);
   node_free(x->c);
+  node_free(x->d);
   for (size_t i = 0; i < x->n; i++) {
     node_free(x->items[i]);
     if (x->keys)
@@ -44,6 +46,105 @@ static struct node *nnew(enum nkind k) {
     lx_err(&(p)->lx, m);                                                                           \
     return NULL;                                                                                   \
   } while (0)
+
+static bool kw(struct lexer *l, const char *w) {
+  return l->tok == T_IDENT && strcmp(l->text, w) == 0;
+}
+
+/* Parse a for-expression. The current token is the `for` keyword; the opening
+ * '[' or '{' has already been consumed by the caller. `object` selects the
+ * `{for k => v}` form over the `[for v]` tuple form. */
+static struct node *parse_for(struct parser *p, bool object) {
+  struct lexer *l = &p->lx;
+  lex(l); /* consume 'for' */
+  if (l->tok != T_IDENT)
+    PERR(p, "expected a variable name after 'for'");
+  char *v1 = strdup(l->text);
+  if (v1 == NULL)
+    return NULL;
+  lex(l);
+  char *v2 = NULL;
+  if (l->tok == T_COMMA) {
+    lex(l);
+    if (l->tok != T_IDENT) {
+      free(v1);
+      PERR(p, "expected a second variable name after ','");
+    }
+    v2 = strdup(l->text);
+    if (v2 == NULL) {
+      free(v1);
+      return NULL;
+    }
+    lex(l);
+  }
+  if (!kw(l, "in")) {
+    free(v1);
+    free(v2);
+    PERR(p, "expected 'in' in for-expression");
+  }
+  lex(l); /* consume 'in' */
+  struct node *coll = parse_expr(p);
+  if (coll == NULL) {
+    free(v1);
+    free(v2);
+    return NULL;
+  }
+  if (l->tok != T_COLON) {
+    free(v1);
+    free(v2);
+    node_free(coll);
+    PERR(p, "expected ':' in for-expression");
+  }
+  lex(l); /* consume ':' */
+  struct node *f = nnew(object ? N_FOR_OBJECT : N_FOR_TUPLE);
+  if (f == NULL) {
+    free(v1);
+    free(v2);
+    node_free(coll);
+    return NULL;
+  }
+  f->a = coll;
+  /* one var -> value var; two vars -> key var, value var */
+  if (v2 != NULL) {
+    f->kvar = v1;
+    f->str = v2;
+  } else {
+    f->str = v1;
+  }
+  f->b = parse_expr(p); /* tuple: result expr; object: key expr */
+  if (f->b == NULL) {
+    node_free(f);
+    return NULL;
+  }
+  if (object) {
+    if (l->tok != T_FATARROW) {
+      node_free(f);
+      PERR(p, "expected '=>' in object for-expression");
+    }
+    lex(l);
+    f->c = parse_expr(p); /* value expr */
+    if (f->c == NULL) {
+      node_free(f);
+      return NULL;
+    }
+  }
+  if (kw(l, "if")) { /* optional filter */
+    lex(l);
+    f->d = parse_expr(p);
+    if (f->d == NULL) {
+      node_free(f);
+      return NULL;
+    }
+  }
+  enum tok close = object ? T_RC : T_RB;
+  if (l->tok != close) {
+    node_free(f);
+    PERR(p, object ? "expected '}' to close object for-expression"
+                   : "expected ']' to close for-expression");
+  }
+  lex(l); /* consume closing bracket */
+  return f;
+}
 
 static struct node *parse_primary(struct parser *p) {
   struct lexer *l = &p->lx;
@@ -144,11 +245,13 @@ static struct node *parse_primary(struct parser *p) {
     lex(l);
     return e;
   }
-  case T_LB: { /* tuple */
+  case T_LB: { /* tuple or [for ...] */
+    lex(l);
+    if (kw(l, "for"))
+      return parse_for(p, false);
     struct node *x = nnew(N_TUPLE);
     if (!x)
       return NULL;
-    lex(l);
     while (l->tok != T_RB) {
       struct node *e = parse_expr(p);
       if (e == NULL) {
@@ -176,11 +279,13 @@ static struct node *parse_primary(struct parser *p) {
     lex(l);
     return x;
   }
-  case T_LC: { /* object */
+  case T_LC: { /* object or {for ...} */
+    lex(l);
+    if (kw(l, "for"))
+      return parse_for(p, true);
     struct node *x = nnew(N_OBJECT);
     if (!x)
       return NULL;
-    lex(l);
     while (l->tok != T_RC) {
       if (l->tok != T_IDENT && l->tok != T_STR) {
         node_free(x);
@@ -259,6 +364,64 @@ static struct node *parse_postfix(struct parser *p) {
       e = x;
     } else if (l->tok == T_LB) {
       lex(l);
+      if (l->tok == T_STAR) {
+        /* splat: xs[*].a.b  desugars to  [for $splat in xs : $splat.a.b] */
+        lex(l);
+        if (l->tok != T_RB) {
+          node_free(e);
+          PERR(p, "expected ']' after '[*]'");
+        }
+        lex(l);
+        struct node *body = nnew(N_VAR);
+        if (body == NULL) {
+          node_free(e);
+          return NULL;
+        }
+        body->str = strdup("$splat");
+        if (body->str == NULL) {
+          node_free(body);
+          node_free(e);
+          return NULL;
+        }
+        while (l->tok == T_DOT) { /* attribute trailers map over each element */
+          lex(l);
+          if (l->tok != T_IDENT) {
+            node_free(body);
+            node_free(e);
+            PERR(p, "expected attribute name after '.'");
+          }
+          struct node *at = nnew(N_ATTR);
+          if (at == NULL) {
+            node_free(body);
+            node_free(e);
+            return NULL;
+          }
+          at->a = body;
+          at->str = strdup(l->text);
+          if (at->str == NULL) {
+            node_free(at);
+            node_free(e);
+            return NULL;
+          }
+          lex(l);
+          body = at;
+        }
+        struct node *f = nnew(N_FOR_TUPLE);
+        if (f == NULL) {
+          node_free(body);
+          node_free(e);
+          return NULL;
+        }
+        f->a = e;
+        f->b = body;
+        f->str = strdup("$splat");
+        if (f->str == NULL) {
+          node_free(f);
+          return NULL;
+        }
+        e = f;
+        continue;
+      }
       struct node *idx = parse_expr(p);
       if (idx == NULL) {
         node_free(e);

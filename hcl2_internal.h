@@ -24,6 +24,9 @@ struct hcl2_value {
 hcl2_value *vclone(const hcl2_value *v);
 bool vequal(const hcl2_value *a, const hcl2_value *b);
 const hcl2_value *ctx_var(hcl2_ctx *c, const char *name);
+/* Detach and return the owned value bound to name (NULL if absent); used to
+ * save/restore for-expression loop-variable scope. */
+hcl2_value *ctx_take_var(hcl2_ctx *c, const char *name);
 hcl2_func ctx_func(hcl2_ctx *c, const char *name);
 hcl2_func builtin_func(const char *name);
 
@@ -62,6 +65,7 @@ enum tok {
   T_AND,
   T_OR,
   T_NOT,
+  T_FATARROW, /* => (object for-expression) */
 };
 struct lexer {
   const char *p, *end;
@@ -87,15 +91,19 @@ enum nkind {
   N_TUPLE,
   N_OBJECT,
   N_CALL,
+  N_FOR_TUPLE,  /* [for v in coll : body if cond]  (splat desugars to this) */
+  N_FOR_OBJECT, /* {for k, v in coll : kexpr => vexpr if cond} */
 };
 struct node {
   enum nkind kind;
-  hcl2_value *lit;        /* N_LIT */
-  char *str;              /* N_TEMPLATE raw / N_VAR name / N_ATTR name / N_CALL name */
-  enum tok op;            /* N_UNARY / N_BINARY */
-  struct node *a, *b, *c; /* children */
-  struct node **items;    /* N_TUPLE / N_CALL args / N_OBJECT vals */
-  char **keys;            /* N_OBJECT keys */
+  hcl2_value *lit; /* N_LIT */
+  char *str;       /* N_TEMPLATE raw / N_VAR,N_ATTR,N_CALL name / N_FOR_* value var */
+  char *kvar;      /* N_FOR_* : optional key/index variable name */
+  enum tok op;     /* N_UNARY / N_BINARY */
+  /* children. N_FOR_*: a=collection, b=body/key-expr, c=value-expr(object), d=cond */
+  struct node *a, *b, *c, *d;
+  struct node **items; /* N_TUPLE / N_CALL args / N_OBJECT vals */
+  char **keys;         /* N_OBJECT keys */
   size_t n;
 };
 struct parser {

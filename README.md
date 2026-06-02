@@ -9,10 +9,9 @@ when you need the **expression language**.
 > is *not* yet a spec-complete HCL2. What works today is the HCL2 expression
 > sub-language, a cty-lite value model, and document bodies (attributes +
 > labeled blocks) with lazy decoding against a context; what's missing is
-> tracked in [ROADMAP.md](ROADMAP.md) (heredocs, `for`-expressions, splat,
-> `%{ }` template directives, the JSON profile, the full `cty` type system with
-> unknowns, and source-range diagnostics). It is honest about being a work in
-> progress.
+> tracked in [ROADMAP.md](ROADMAP.md) (heredocs, `%{ }` template directives,
+> the JSON profile, the full `cty` type system with unknowns, and source-range
+> diagnostics). It is honest about being a work in progress.
 
 ## What works now
 
@@ -20,9 +19,10 @@ when you need the **expression language**.
 **templates** with `${ expr }` interpolation, tuples `[...]`, objects
 `{ k = v, ... }`, unary `- !`, binary `+ - * / %`, comparison `== != < <= > >=`,
 logical `&& ||`, the conditional `cond ? a : b`, parentheses, variable
-references with `.attr` / `[index]` traversal, and function calls — evaluated
+references with `.attr` / `[index]` traversal, function calls — evaluated
 against a context of variables and functions (builtins: `length`, `upper`,
-`lower`, `min`, `max`).
+`lower`, `min`, `max`) — plus **for-expressions** (`[for x in xs : x*2 if x>0]`,
+`{for k, v in m : k => v}`) and **splat** (`xs[*].name`).
 
 **Configuration bodies** (`hcl2_parse`): documents of attributes
 (`name = expr`) and nested, optionally labeled blocks (`type "label" { ... }`),

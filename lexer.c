@@ -127,6 +127,11 @@ void lex(struct lexer *l) {
       l->tok = T_EQ;
       return;
     }
+    if (l->end - l->p >= 2 && l->p[1] == '>') {
+      l->p += 2;
+      l->tok = T_FATARROW;
+      return;
+    }
     l->p++;
     l->tok = T_ASSIGN;
     return;

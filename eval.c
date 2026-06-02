@@ -204,10 +204,129 @@ done:
   return res;
 }
 
+/* Evaluate a for-expression (also the desugaring target of splat). Loop
+ * variables are bound in the context for the duration of the loop and any
+ * shadowed outer bindings are restored afterwards. */
+static hcl2_value *eval_for(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz) {
+  bool object = (x->kind == N_FOR_OBJECT);
+  hcl2_value *coll = hcl2_eval_node(x->a, ctx, err, errsz);
+  if (coll == NULL)
+    return NULL;
+  if (coll->kind != HCL2_TUPLE && coll->kind != HCL2_OBJECT) {
+    everr(err, errsz, "for-expression requires a tuple or object");
+    hcl2_value_free(coll);
+    return NULL;
+  }
+  /* Loop vars must be bound somewhere; synthesize a context if none was given. */
+  hcl2_ctx *tmp = NULL;
+  hcl2_ctx *use = ctx;
+  if (use == NULL) {
+    tmp = hcl2_ctx_new();
+    if (tmp == NULL) {
+      hcl2_value_free(coll);
+      return NULL;
+    }
+    use = tmp;
+  }
+  hcl2_value *saved_v = ctx_take_var(use, x->str);
+  hcl2_value *saved_k = x->kvar ? ctx_take_var(use, x->kvar) : NULL;
+
+  hcl2_value *result = object ? hcl2_object() : hcl2_tuple();
+  bool ok = (result != NULL);
+  size_t count = (coll->kind == HCL2_TUPLE) ? coll->n : coll->nf;
+  for (size_t i = 0; ok && i < count; i++) {
+    hcl2_value *vval, *kval = NULL;
+    if (coll->kind == HCL2_TUPLE) {
+      vval = vclone(coll->items[i]);
+      if (x->kvar)
+        kval = hcl2_number((double)i);
+    } else {
+      vval = vclone(coll->fields[i].val);
+      if (x->kvar)
+        kval = hcl2_string(coll->fields[i].key);
+    }
+    if (vval == NULL || (x->kvar && kval == NULL) || !hcl2_ctx_set_var(use, x->str, vval)) {
+      hcl2_value_free(vval);
+      hcl2_value_free(kval);
+      ok = false;
+      break;
+    }
+    if (x->kvar && !hcl2_ctx_set_var(use, x->kvar, kval)) {
+      hcl2_value_free(kval);
+      ok = false;
+      break;
+    }
+    if (x->d != NULL) { /* optional 'if' filter */
+      hcl2_value *c = hcl2_eval_node(x->d, use, err, errsz);
+      if (c == NULL) {
+        ok = false;
+        break;
+      }
+      if (c->kind != HCL2_BOOL) {
+        everr(err, errsz, "for-expression 'if' must be a boolean");
+        hcl2_value_free(c);
+        ok = false;
+        break;
+      }
+      bool keep = c->b;
+      hcl2_value_free(c);
+      if (!keep)
+        continue;
+    }
+    if (object) {
+      hcl2_value *kk = hcl2_eval_node(x->b, use, err, errsz);
+      if (kk == NULL) {
+        ok = false;
+        break;
+      }
+      if (kk->kind != HCL2_STRING) {
+        everr(err, errsz, "object for-expression key must be a string");
+        hcl2_value_free(kk);
+        ok = false;
+        break;
+      }
+      hcl2_value *vv = hcl2_eval_node(x->c, use, err, errsz);
+      if (vv == NULL || !hcl2_object_set(result, kk->str, vv)) {
+        hcl2_value_free(kk);
+        hcl2_value_free(vv);
+        ok = false;
+        break;
+      }
+      hcl2_value_free(kk);
+    } else {
+      hcl2_value *bv = hcl2_eval_node(x->b, use, err, errsz);
+      if (bv == NULL || !hcl2_tuple_push(result, bv)) {
+        hcl2_value_free(bv);
+        ok = false;
+        break;
+      }
+    }
+  }
+  /* restore shadowed scope */
+  hcl2_value_free(ctx_take_var(use, x->str));
+  if (saved_v != NULL)
+    hcl2_ctx_set_var(use, x->str, saved_v);
+  if (x->kvar != NULL) {
+    hcl2_value_free(ctx_take_var(use, x->kvar));
+    if (saved_k != NULL)
+      hcl2_ctx_set_var(use, x->kvar, saved_k);
+  }
+  hcl2_value_free(coll);
+  hcl2_ctx_free(tmp);
+  if (!ok) {
+    hcl2_value_free(result);
+    return NULL;
+  }
+  return result;
+}
+
 hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz) {
   switch (x->kind) {
   case N_LIT:
     return vclone(x->lit);
+  case N_FOR_TUPLE:
+  case N_FOR_OBJECT:
+    return eval_for(x, ctx, err, errsz);
   case N_TEMPLATE:
     return eval_template(x->str, ctx, err, errsz);
   case N_VAR: {

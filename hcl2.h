@@ -8,20 +8,22 @@
  * c-hcl2 -- a from-scratch C implementation of HCL2, the heavyweight companion
  * to libhcl/c-hcl (which parses only the declarative subset).
  *
- * STATUS: milestones 1-2 -- the HCL2 *expression* language + value model, and
- * configuration *bodies* (attributes + labeled blocks) with lazy decoding
- * against a context. Not yet spec-complete; see ROADMAP.md (heredocs,
- * for-expressions, splat, %{} template directives, the JSON profile, the full
- * cty type system with unknown values, and source-range diagnostics are not
- * done yet).
+ * STATUS: milestones 1-2 done, M3 in progress -- the HCL2 *expression*
+ * language + value model, configuration *bodies* (attributes + labeled blocks)
+ * with lazy decoding against a context, and the for-expression / splat
+ * collection expressions. Not yet spec-complete; see ROADMAP.md (heredocs,
+ * %{} template directives, the JSON profile, the full cty type system with
+ * unknown values, and source-range diagnostics are not done yet).
  *
  * Implemented now: numbers, booleans, null, quoted-string templates with
  * `${ expr }` interpolation, tuples `[...]`, objects `{ k = v, ... }`, unary
  * `- !`, binary arithmetic `+ - * / %`, comparison `== != < <= > >=`, logical
  * `&& ||`, the conditional `cond ? a : b`, parentheses, variable references
- * with `.attr` / `[index]` traversal, and function calls against a context;
- * plus document bodies via hcl2_parse (see the "configuration bodies" section
- * below), with hash, line, and block comments.
+ * with `.attr` / `[index]` traversal, function calls against a context,
+ * for-expressions (`[for x in xs : e]`, `{for k, v in m : k => v}`, with `if`
+ * filters) and splat (`xs[*].field`); plus document bodies via hcl2_parse (see
+ * the "configuration bodies" section below), with hash, line, and block
+ * comments.
  */
 
 typedef enum {

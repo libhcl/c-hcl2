@@ -58,7 +58,7 @@ Punctuation / operator tokens:
 | `T_PLUS`  | `+`    | `T_MINUS`| `-`    |
 | `T_STAR`  | `*`    | `T_SLASH`| `/`    |
 | `T_PCT`   | `%`    | `T_AND`  | `&&`   |
-| `T_OR`    | `\|\|` |          |        |
+| `T_OR`    | `\|\|` | `T_FATARROW` | `=>` |
 
 `&` not followed by `&`, and `|` not followed by `|`, are lexer errors. Any
 other byte that starts none of the above is `T_ERR` ("invalid character").
@@ -86,7 +86,8 @@ unary       = ( "-" | "!" ) unary
                  and "!!x" are accepted *)
 
 postfix     = primary { "." IDENT          (* attribute access  *)
-                      | "[" expr "]" } ;    (* index / element   *)
+                      | "[" expr "]"        (* index / element   *)
+                      | "[" "*" "]" { "." IDENT } } ;  (* splat — see below *)
 
 primary     = NUMBER
             | STRING                         (* a template — see §4 *)
@@ -94,8 +95,8 @@ primary     = NUMBER
             | IDENT "(" [ args ] ")"         (* function call *)
             | IDENT                          (* variable reference *)
             | "(" expr ")"                   (* grouping *)
-            | tuple
-            | object ;
+            | tuple   | tuple-for
+            | object  | object-for ;
 
 args        = expr { "," expr } [ "," ] ;    (* trailing comma allowed *)
 
@@ -107,7 +108,21 @@ objitem     = ( IDENT | STRING ) ( "=" | ":" ) expr [ "," ] ;
               (* both "=" and ":" accepted between key and value;
                  items may be separated by "," OR just whitespace/newline;
                  may be empty *)
+
+(* --- for-expressions (M3) --- *)
+forintro    = "for" IDENT [ "," IDENT ] "in" expr ":" ;
+              (* one var = value var; two vars = key/index var, then value var *)
+tuple-for   = "[" forintro expr [ "if" expr ] "]" ;
+object-for  = "{" forintro expr "=>" expr [ "if" expr ] "}" ;
 ```
+
+### Splat
+
+`xs[*]` followed by attribute trailers desugars to a tuple for-expression:
+`xs[*].a.b` is parsed as `[for $splat in xs : $splat.a.b]`. The `$splat`
+internal variable cannot collide with a real one (identifiers can't contain
+`$`). **Not yet supported:** index trailers after a splat (`xs[*][0]`) or
+chained splats (`xs[*].a[*]`); only `.attr` chains follow `[*]`.
 
 ### Notes on the productions
 
@@ -235,6 +250,8 @@ The parser emits these `enum nkind` nodes (`hcl2_internal.h`):
 | `N_COND`     | `? :`                    | `a` (cond), `b` (then), `c` (else)         |
 | `N_TUPLE`    | `[ ... ]`                | `items[ ]`                                 |
 | `N_OBJECT`   | `{ ... }`                | `keys[ ]`, `items[ ]` (values)             |
+| `N_FOR_TUPLE`| `[for v in c : e]`, splat| `str`/`kvar` (vars), `a` (coll), `b` (body), `d` (cond) |
+| `N_FOR_OBJECT`| `{for k,v in c : ke => ve}` | `str`/`kvar` (vars), `a` (coll), `b` (key), `c` (val), `d` (cond) |
 
 ---
 

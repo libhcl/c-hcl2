@@ -30,12 +30,14 @@ this is built milestone by milestone.
   *Not yet:* newline-significant attribute termination (an attribute value is the
   longest expression that parses); revisit with M4 diagnostics.
 
-## M3 — template & collection expressions
+## M3 — template & collection expressions (in progress)
 
-- `for`-expressions: `[for x in xs : f(x)]`, `{for k, v in m : ...}`, `if` filters
-- splat: `xs[*].field`
-- `%{ for }` / `%{ if }` template directives; heredocs `<<EOF`, `<<-EOF`
-- string-index, `...` (variadic) call expansion
+- ✅ `for`-expressions: tuple `[for x in xs : f(x)]`, object
+  `{for k, v in m : k => v}`, the `k, v` key/index variable, and `if` filters
+- ✅ splat: `xs[*].field` (desugars to a for-expression). *Not yet:* index
+  trailers after a splat (`xs[*][0]`) or chained splats (`xs[*].a[*]`).
+- ⬜ `%{ for }` / `%{ if }` template directives; heredocs `<<EOF`, `<<-EOF`
+- ⬜ string-index, `...` (variadic) call expansion
 
 ## M4 — type system & diagnostics
 

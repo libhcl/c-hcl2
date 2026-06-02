@@ -273,6 +273,20 @@ const hcl2_value *ctx_var(hcl2_ctx *c, const char *name) {
       return c->vars[i].val;
   return NULL;
 }
+hcl2_value *ctx_take_var(hcl2_ctx *c, const char *name) {
+  if (c == NULL)
+    return NULL;
+  for (size_t i = 0; i < c->nv; i++) {
+    if (strcmp(c->vars[i].name, name) == 0) {
+      hcl2_value *v = c->vars[i].val;
+      free(c->vars[i].name);
+      memmove(&c->vars[i], &c->vars[i + 1], (c->nv - i - 1) * sizeof(c->vars[0]));
+      c->nv--;
+      return v;
+    }
+  }
+  return NULL;
+}
 hcl2_func ctx_func(hcl2_ctx *c, const char *name) {
   if (c == NULL)
     return NULL;

@@ -135,6 +135,40 @@ int main(void) {
   check("err unterminated string", fails("\"abc", NULL));
   check("err unterminated interp", fails("\"a${1+1\"", NULL));
 
+  /* ---- M3: for-expressions + splat ---- */
+  check("for tuple map", isnum(ev("length([for x in [1,2,3] : x * 2])", NULL), 3));
+  check("for tuple value", isnum(ev("[for x in [10,20,30] : x + 1][2]", NULL), 31));
+  check("for tuple filter", isnum(ev("length([for x in [1,2,3,4] : x if x > 2])", NULL), 2));
+  check("for tuple index var", isnum(ev("[for i, x in [5,6,7] : i + x][1]", NULL), 7));
+  check("for over object values", isnum(ev("[for v in {a=1, b=2} : v][1]", NULL), 2));
+  check("for object form", isnum(ev("{for k, v in {a=1, b=2} : k => v * 10}.b", NULL), 20));
+  check("for object filter",
+        isnum(ev("length({for k, v in {a=1,b=2,c=3} : k => v if v != 2})", NULL), 2));
+  check("for nested", isnum(ev("[for xs in [[1,2],[3]] : length(xs)][0]", NULL), 2));
+  {
+    hcl2_ctx *ctx = hcl2_ctx_new();
+    hcl2_value *people = hcl2_tuple();
+    hcl2_value *p1 = hcl2_object();
+    hcl2_object_set(p1, "name", hcl2_string("ada"));
+    hcl2_value *p2 = hcl2_object();
+    hcl2_object_set(p2, "name", hcl2_string("alan"));
+    hcl2_tuple_push(people, p1);
+    hcl2_tuple_push(people, p2);
+    hcl2_ctx_set_var(ctx, "people", people);
+    check("splat attr", isstr(ev("people[*].name[1]", ctx), "alan"));
+    check("splat len", isnum(ev("length(people[*].name)", ctx), 2));
+    /* loop var does not leak into the surrounding scope */
+    check("for scope clean", fails("[for z in [1] : z][0] + z", ctx));
+    hcl2_ctx_free(ctx);
+  }
+  check("for err not collection", fails("[for x in 5 : x]", NULL));
+  check("for err if not bool", fails("[for x in [1] : x if 3]", NULL));
+  check("for err obj key not string", fails("{for x in [1] : x => x}", NULL));
+  check("for err missing in", fails("[for x [1] : x]", NULL));
+  check("for err missing colon", fails("[for x in [1] x]", NULL));
+  check("for err unterminated", fails("[for x in [1] : x", NULL));
+  check("for err missing fatarrow", fails("{for k, v in {a=1} : k v}", NULL));
+
   /* ---- M2: configuration bodies ---- */
   {
     const char *src = "# a comment\n"
