@@ -59,6 +59,38 @@ size_t hcl2_value_len(const hcl2_value *v);                     /* tuple/object 
 const hcl2_value *hcl2_value_at(const hcl2_value *v, size_t i); /* tuple */
 const hcl2_value *hcl2_value_get(const hcl2_value *v, const char *key); /* object */
 
+/* --- type constraints & conversion (M4, in progress) ---
+ *
+ * A small cty-lite type model used as a *constraint*: hcl2_convert coerces a
+ * value toward a target type (number<->string, string->bool, etc.) and
+ * validates/normalises collections. NOTE: this value model has no distinct
+ * list/set/map runtime kind yet -- list/set are represented as tuples and map
+ * as an object -- so converting "to list(number)" yields a homogeneous tuple
+ * (set additionally de-duplicates). The full cty type system (distinct
+ * collection kinds, unknown values) is future M4 work; see ROADMAP.md.
+ *
+ *   hcl2_type *t = hcl2_type_list(hcl2_type_number());
+ *   hcl2_value *nums = hcl2_convert(v, t, err, sizeof err);  // tuple of numbers
+ *   hcl2_type_free(t);   // frees the list type and its owned element
+ */
+typedef struct hcl2_type hcl2_type;
+
+/* Primitive/dynamic type singletons (do NOT free; hcl2_type_free is a no-op). */
+hcl2_type *hcl2_type_any(void); /* dynamic: hcl2_convert is the identity */
+hcl2_type *hcl2_type_bool(void);
+hcl2_type *hcl2_type_number(void);
+hcl2_type *hcl2_type_string(void);
+/* Collection constructors; each TAKES OWNERSHIP of `elem` (free the result
+ * with hcl2_type_free, which recurses into the element). */
+hcl2_type *hcl2_type_list(hcl2_type *elem);
+hcl2_type *hcl2_type_set(hcl2_type *elem);
+hcl2_type *hcl2_type_map(hcl2_type *elem);
+void hcl2_type_free(hcl2_type *t);
+
+/* Convert v to type t. Returns a fresh owned value, or NULL on a type error
+ * (message in err). */
+hcl2_value *hcl2_convert(const hcl2_value *v, const hcl2_type *t, char *err, size_t errsz);
+
 /* --- evaluation context --- */
 hcl2_ctx *hcl2_ctx_new(void); /* pre-populated with the builtin functions */
 void hcl2_ctx_free(hcl2_ctx *ctx);

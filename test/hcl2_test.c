@@ -51,6 +51,18 @@ static bool fails(const char *s, hcl2_ctx *ctx) {
   return err[0] != '\0';
 }
 
+/* Evaluate an expression, convert the result to `t` (taking ownership of t,
+ * which is a no-op to free for primitive singletons), free the source, and
+ * return the converted value so the isnum/isstr/isbool helpers can consume it. */
+static hcl2_value *hcl2_convert_helper(const char *expr, hcl2_type *t) {
+  char err[256] = "";
+  hcl2_value *v = hcl2_eval(expr, strlen(expr), NULL, err, sizeof(err));
+  hcl2_value *out = hcl2_convert(v, t, err, sizeof(err));
+  hcl2_value_free(v);
+  hcl2_type_free(t);
+  return out;
+}
+
 /* A caller-registered function, for hcl2_ctx_set_func coverage. */
 static hcl2_value *fn_inc(const hcl2_value *const *a, size_t n, char *err, size_t errsz) {
   (void)err;
@@ -225,6 +237,68 @@ int main(void) {
     check("diag deferred null", v == NULL);
     check("diag deferred pos line 3", strstr(err, "line 3, column 5") != NULL);
     hcl2_doc_free(d);
+  }
+
+  /* M4 (partial): type constraints & conversion */
+  {
+    /* primitive coercions */
+    check("conv num->str", isstr(hcl2_convert_helper("42", hcl2_type_string()), "42"));
+    check("conv bool->str", isstr(hcl2_convert_helper("true", hcl2_type_string()), "true"));
+    check("conv str->num", isnum(hcl2_convert_helper("\"3.5\"", hcl2_type_number()), 3.5));
+    check("conv str->bool", isbool(hcl2_convert_helper("\"false\"", hcl2_type_bool()), false));
+    check("conv num->num id", isnum(hcl2_convert_helper("7", hcl2_type_number()), 7));
+    check("conv any id", isnum(hcl2_convert_helper("9", hcl2_type_any()), 9));
+    check("conv str->num bad", hcl2_convert_helper("\"abc\"", hcl2_type_number()) == NULL);
+    check("conv num->bool bad", hcl2_convert_helper("1", hcl2_type_bool()) == NULL);
+
+    /* list(number): tuple of mixed-but-coercible elements -> tuple of numbers */
+    {
+      char err[256] = "";
+      hcl2_value *src = ev("[1, \"2\", 3]", NULL);
+      hcl2_type *t = hcl2_type_list(hcl2_type_number());
+      hcl2_value *out = hcl2_convert(src, t, err, sizeof(err));
+      check("conv list len", out && hcl2_value_len(out) == 3);
+      double d;
+      check("conv list elem coerced",
+            out && hcl2_value_as_number(hcl2_value_at(out, 1), &d) && d == 2);
+      hcl2_value_free(out);
+      hcl2_value_free(src);
+      hcl2_type_free(t);
+    }
+    /* set(string): de-duplicates */
+    {
+      char err[256] = "";
+      hcl2_value *src = ev("[\"a\", \"b\", \"a\"]", NULL);
+      hcl2_type *t = hcl2_type_set(hcl2_type_string());
+      hcl2_value *out = hcl2_convert(src, t, err, sizeof(err));
+      check("conv set dedup", out && hcl2_value_len(out) == 2);
+      hcl2_value_free(out);
+      hcl2_value_free(src);
+      hcl2_type_free(t);
+    }
+    /* map(number): object values coerced */
+    {
+      char err[256] = "";
+      hcl2_value *src = ev("{a = \"1\", b = 2}", NULL);
+      hcl2_type *t = hcl2_type_map(hcl2_type_number());
+      hcl2_value *out = hcl2_convert(src, t, err, sizeof(err));
+      double d;
+      check("conv map coerced",
+            out && hcl2_value_as_number(hcl2_value_get(out, "a"), &d) && d == 1);
+      hcl2_value_free(out);
+      hcl2_value_free(src);
+      hcl2_type_free(t);
+    }
+    /* nested list(list(number)) frees cleanly; shape error on non-tuple */
+    {
+      char err[256] = "";
+      hcl2_type *t = hcl2_type_list(hcl2_type_list(hcl2_type_number()));
+      hcl2_value *scalar = ev("5", NULL);
+      check("conv list shape err", hcl2_convert(scalar, t, err, sizeof(err)) == NULL);
+      hcl2_value_free(scalar);
+      hcl2_type_free(t);
+    }
+    check("conv null args", hcl2_convert(NULL, hcl2_type_any(), NULL, 0) == NULL);
   }
 
   /* misc public API surface */
@@ -463,6 +537,33 @@ int main(void) {
     for (size_t i = 0; i < sizeof(docs) / sizeof(docs[0]); i++)
       alld = oom_scan_doc(docs[i]) && alld;
     check("oom scan: documents", alld);
+
+    /* convert() OOM paths: build inputs with the budget off, then fail each
+       allocation inside the conversion until it succeeds. */
+    hcl2_value *lsrc = ev("[1, \"2\", 3]", NULL);
+    hcl2_value *msrc = ev("{a = \"1\", b = 2}", NULL);
+    hcl2_type *lt = hcl2_type_set(hcl2_type_number());
+    hcl2_type *mt = hcl2_type_map(hcl2_type_string());
+    bool cok = false;
+    for (int b = 0; b <= 5000; b++) {
+      hcl2_alloc_budget = b;
+      char e[64] = "";
+      hcl2_value *o1 = hcl2_convert(lsrc, lt, e, sizeof(e));
+      hcl2_value *o2 = hcl2_convert(msrc, mt, e, sizeof(e));
+      hcl2_alloc_budget = -1;
+      bool done = (o1 != NULL && o2 != NULL);
+      hcl2_value_free(o1);
+      hcl2_value_free(o2);
+      if (done) {
+        cok = true;
+        break;
+      }
+    }
+    check("oom scan: convert", cok);
+    hcl2_value_free(lsrc);
+    hcl2_value_free(msrc);
+    hcl2_type_free(lt);
+    hcl2_type_free(mt);
   }
 #endif
 

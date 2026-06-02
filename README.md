@@ -43,6 +43,12 @@ hcl2_value *port = hcl2_body_attr_value(root, "port", ctx, err, sizeof err);
 const hcl2_block *svc = hcl2_body_block_at(root, "service", 0);
 ```
 
+A small **type-constraint / conversion** layer (`hcl2_type_*` + `hcl2_convert`)
+coerces values toward a target type — primitive coercions (number↔string,
+string→bool, …) and `list`/`set`/`map`/`any` constraints (list/set normalise to
+a homogeneous tuple, map to an object, set de-duplicates). The distinct cty
+collection kinds and unknown values are still future work (see ROADMAP.md).
+
 The exact grammar that is parsed today — lexical tokens, EBNF productions (both
 expressions and bodies), the Pratt operator-precedence table, and the template
 rules — is documented in [GRAMMAR.md](GRAMMAR.md).
