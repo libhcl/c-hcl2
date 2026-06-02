@@ -59,6 +59,7 @@ Punctuation / operator tokens:
 | `T_STAR`  | `*`    | `T_SLASH`| `/`    |
 | `T_PCT`   | `%`    | `T_AND`  | `&&`   |
 | `T_OR`    | `\|\|` | `T_FATARROW` | `=>` |
+| `T_HEREDOC` | `<<EOF` / `<<-EOF` | | |
 
 `&` not followed by `&`, and `|` not followed by `|`, are lexer errors. Any
 other byte that starts none of the above is `T_ERR` ("invalid character").
@@ -230,6 +231,25 @@ during parsing:
 - Backslash escapes (`\n`, `\t`, `\r`, `\"`, `\\`, …) are expanded here.
 
 A plain string with no `${` is just its literal (escaped) text.
+
+### Heredocs (M3)
+
+A heredoc introduces a multi-line template:
+
+```
+  <<EOF          <<-EOF
+  line one         indented line one
+  ${expr}            ${expr}
+  EOF            EOF
+```
+
+The delimiter (`EOF` here) is any identifier word; the body runs from the line
+after `<<DELIM` up to a line whose content is the delimiter (for `<<` it must be
+at column 0; for `<<-` it may be indented). The body becomes an `N_TEMPLATE`
+node, so `${ }` interpolation works — **but backslashes are kept literal**
+(no `\n`/`\t` processing), matching HCL. The `<<-` form removes the smallest run
+of leading spaces/tabs common to all non-blank lines. The value includes the
+trailing newline of the last body line.
 
 ---
 

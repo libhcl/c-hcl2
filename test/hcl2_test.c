@@ -169,6 +169,26 @@ int main(void) {
   check("for err unterminated", fails("[for x in [1] : x", NULL));
   check("for err missing fatarrow", fails("{for k, v in {a=1} : k v}", NULL));
 
+  /* ---- M3: heredocs ---- */
+  check("heredoc basic", isstr(ev("<<EOF\nhello\nworld\nEOF\n", NULL), "hello\nworld\n"));
+  check("heredoc empty body", isstr(ev("<<EOF\nEOF\n", NULL), ""));
+  check("heredoc interp", isstr(ev("<<EOF\nv=${1 + 2}\nEOF\n", NULL), "v=3\n"));
+  check("heredoc keeps backslash", isstr(ev("<<EOF\na\\nb\nEOF\n", NULL), "a\\nb\n"));
+  check("heredoc indented strip", isstr(ev("<<-EOF\n    a\n      b\n    EOF\n", NULL), "a\n  b\n"));
+  check("heredoc err unterminated", fails("<<EOF\nhello\n", NULL));
+  check("heredoc err no delim", fails("<<\nx\n", NULL));
+  check("heredoc err no newline", fails("<<EOF x", NULL));
+  {
+    const char *src = "script = <<EOT\nline1\nline2\nEOT\n";
+    char err[256] = "";
+    hcl2_doc *doc = hcl2_parse(src, strlen(src), err, sizeof err);
+    check("heredoc in body parses", doc != NULL);
+    check("heredoc in body value",
+          isstr(hcl2_body_attr_value(hcl2_doc_root(doc), "script", NULL, err, sizeof err),
+                "line1\nline2\n"));
+    hcl2_doc_free(doc);
+  }
+
   /* ---- M2: configuration bodies ---- */
   {
     const char *src = "# a comment\n"

@@ -157,10 +157,12 @@ static struct node *parse_primary(struct parser *p) {
     lex(l);
     return x;
   }
-  case T_STR: {
+  case T_STR:
+  case T_HEREDOC: {
     struct node *x = nnew(N_TEMPLATE);
     if (!x)
       return NULL;
+    x->op = l->tok; /* T_HEREDOC marks a raw template (no backslash escapes) */
     x->str = strdup(l->text);
     if (!x->str) {
       node_free(x);

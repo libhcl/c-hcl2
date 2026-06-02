@@ -29,6 +29,107 @@ static bool settext(struct lexer *l, const char *s, size_t n) {
 static bool id_start(int c) { return isalpha(c) || c == '_'; }
 static bool id_char(int c) { return isalnum(c) || c == '_' || c == '-'; }
 
+/* Lex a heredoc body. The caller has consumed `<<` (and the optional `-`); the
+ * cursor is at the delimiter word. The decoded body is stored in l->text and
+ * the token set to T_HEREDOC. For `<<-`, the smallest run of leading spaces/
+ * tabs common to all non-blank lines is removed from every line. The body is a
+ * template (it still honours `${ }` interpolation at eval time) but, unlike a
+ * quoted string, backslash escapes are kept literal. */
+static void lex_heredoc(struct lexer *l, bool indented) {
+  const char *ds = l->p;
+  while (l->p < l->end && (isalnum((unsigned char)*l->p) || *l->p == '_'))
+    l->p++;
+  size_t dlen = (size_t)(l->p - ds);
+  char delim[256];
+  if (dlen == 0 || dlen >= sizeof(delim)) {
+    l->tok = T_ERR;
+    lx_err(l, dlen ? "heredoc delimiter too long" : "missing heredoc delimiter");
+    return;
+  }
+  memcpy(delim, ds, dlen);
+  delim[dlen] = '\0';
+  while (l->p < l->end && (*l->p == ' ' || *l->p == '\t' || *l->p == '\r'))
+    l->p++;
+  if (l->p >= l->end || *l->p != '\n') {
+    l->tok = T_ERR;
+    lx_err(l, "expected newline after heredoc delimiter");
+    return;
+  }
+  l->p++; /* consume newline; body starts here */
+  const char *body = l->p, *q = l->p, *term = NULL;
+  for (;;) {
+    const char *ls = q, *t = ls;
+    if (indented)
+      while (t < l->end && (*t == ' ' || *t == '\t'))
+        t++;
+    if ((size_t)(l->end - t) >= dlen && memcmp(t, delim, dlen) == 0) {
+      const char *r = t + dlen;
+      while (r < l->end && (*r == ' ' || *r == '\t' || *r == '\r'))
+        r++;
+      if (r >= l->end || *r == '\n') { /* terminator line */
+        term = ls;
+        l->p = (r < l->end) ? r + 1 : r;
+        break;
+      }
+    }
+    while (q < l->end && *q != '\n')
+      q++;
+    if (q >= l->end) {
+      l->tok = T_ERR;
+      lx_err(l, "unterminated heredoc");
+      return;
+    }
+    q++; /* next line */
+  }
+  size_t rawlen = (size_t)(term - body);
+  if (!indented) {
+    l->tok = settext(l, body, rawlen) ? T_HEREDOC : T_ERR;
+    return;
+  }
+  /* compute common indentation over non-blank lines */
+  size_t minind = (size_t)-1;
+  for (const char *p = body; p < term;) {
+    const char *le = p;
+    while (le < term && *le != '\n')
+      le++;
+    const char *s = p;
+    while (s < le && (*s == ' ' || *s == '\t'))
+      s++;
+    if (s < le && (size_t)(s - p) < minind)
+      minind = (size_t)(s - p);
+    p = (le < term) ? le + 1 : le;
+  }
+  if (minind == (size_t)-1)
+    minind = 0;
+  char *out = malloc(rawlen + 1);
+  if (out == NULL) {
+    l->tok = T_ERR;
+    return;
+  }
+  char *w = out;
+  for (const char *p = body; p < term;) {
+    const char *le = p;
+    while (le < term && *le != '\n')
+      le++;
+    const char *s = p;
+    size_t drop = 0;
+    while (s < le && drop < minind && (*s == ' ' || *s == '\t')) {
+      s++;
+      drop++;
+    }
+    memcpy(w, s, (size_t)(le - s));
+    w += le - s;
+    if (le < term) {
+      *w++ = '\n';
+      p = le + 1;
+    } else {
+      p = le;
+    }
+  }
+  l->tok = settext(l, out, (size_t)(w - out)) ? T_HEREDOC : T_ERR;
+  free(out);
+}
+
 void lex(struct lexer *l) {
   /* Skip whitespace and comments between tokens: '#' and '//' line comments,
      and '/' '*' ... '*' '/' block comments. */
@@ -148,6 +249,16 @@ void lex(struct lexer *l) {
     if (l->end - l->p >= 2 && l->p[1] == '=') {
       l->p += 2;
       l->tok = T_LE;
+      return;
+    }
+    if (l->end - l->p >= 2 && l->p[1] == '<') {
+      l->p += 2;
+      bool indented = false;
+      if (l->p < l->end && *l->p == '-') {
+        indented = true;
+        l->p++;
+      }
+      lex_heredoc(l, indented);
       return;
     }
     l->p++;

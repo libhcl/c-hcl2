@@ -21,9 +21,9 @@
  * `&& ||`, the conditional `cond ? a : b`, parentheses, variable references
  * with `.attr` / `[index]` traversal, function calls against a context,
  * for-expressions (`[for x in xs : e]`, `{for k, v in m : k => v}`, with `if`
- * filters) and splat (`xs[*].field`); plus document bodies via hcl2_parse (see
- * the "configuration bodies" section below), with hash, line, and block
- * comments.
+ * filters), splat (`xs[*].field`) and heredocs (`<<EOF` / `<<-EOF`); plus
+ * document bodies via hcl2_parse (see the "configuration bodies" section
+ * below), with hash, line, and block comments.
  */
 
 typedef enum {

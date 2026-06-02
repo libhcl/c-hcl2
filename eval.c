@@ -64,8 +64,11 @@ static bool val_to_text(const hcl2_value *v, struct sbuf *s, char *err, size_t e
 
 hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz);
 
-/* Evaluate a string template (raw inner bytes). */
-static hcl2_value *eval_template(const char *raw, hcl2_ctx *ctx, char *err, size_t errsz) {
+/* Evaluate a string template (raw inner bytes). When `heredoc` is true the body
+ * is a heredoc: backslash escapes are kept literal (only `${ }` / `$${` are
+ * interpreted), matching HCL's template semantics. */
+static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *err,
+                                 size_t errsz) {
   struct sbuf s = {0};
   const char *p = raw, *end = raw + strlen(raw);
   while (p < end) {
@@ -112,7 +115,7 @@ static hcl2_value *eval_template(const char *raw, hcl2_ctx *ctx, char *err, size
       free(s.p);
       return NULL;
     }
-    if (p[0] == '\\' && p + 1 < end) {
+    if (!heredoc && p[0] == '\\' && p + 1 < end) {
       char e = p[1];
       char ch = e;
       if (e == 'n')
@@ -328,7 +331,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
   case N_FOR_OBJECT:
     return eval_for(x, ctx, err, errsz);
   case N_TEMPLATE:
-    return eval_template(x->str, ctx, err, errsz);
+    return eval_template(x->str, x->op == T_HEREDOC, ctx, err, errsz);
   case N_VAR: {
     const hcl2_value *v = ctx_var(ctx, x->str);
     if (v == NULL) {

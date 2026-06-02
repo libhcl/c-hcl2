@@ -36,7 +36,9 @@ this is built milestone by milestone.
   `{for k, v in m : k => v}`, the `k, v` key/index variable, and `if` filters
 - ✅ splat: `xs[*].field` (desugars to a for-expression). *Not yet:* index
   trailers after a splat (`xs[*][0]`) or chained splats (`xs[*].a[*]`).
-- ⬜ `%{ for }` / `%{ if }` template directives; heredocs `<<EOF`, `<<-EOF`
+- ✅ heredocs `<<EOF` and indented `<<-EOF` (common-leading-whitespace strip);
+  the body is a template (honours `${ }`) but keeps backslashes literal
+- ⬜ `%{ for }` / `%{ if }` template directives
 - ⬜ string-index, `...` (variadic) call expansion
 
 ## M4 — type system & diagnostics
