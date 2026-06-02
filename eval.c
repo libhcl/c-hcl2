@@ -62,7 +62,7 @@ static bool val_to_text(const hcl2_value *v, struct sbuf *s, char *err, size_t e
   }
 }
 
-static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz);
+hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz);
 
 /* Evaluate a string template (raw inner bytes). */
 static hcl2_value *eval_template(const char *raw, hcl2_ctx *ctx, char *err, size_t errsz) {
@@ -204,7 +204,7 @@ done:
   return res;
 }
 
-static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz) {
+hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz) {
   switch (x->kind) {
   case N_LIT:
     return vclone(x->lit);
@@ -221,7 +221,7 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     return vclone(v);
   }
   case N_ATTR: {
-    hcl2_value *o = eval(x->a, ctx, err, errsz);
+    hcl2_value *o = hcl2_eval_node(x->a, ctx, err, errsz);
     if (o == NULL)
       return NULL;
     const hcl2_value *f = hcl2_value_get(o, x->str);
@@ -237,10 +237,10 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     return res;
   }
   case N_INDEX: {
-    hcl2_value *base = eval(x->a, ctx, err, errsz);
+    hcl2_value *base = hcl2_eval_node(x->a, ctx, err, errsz);
     if (base == NULL)
       return NULL;
-    hcl2_value *idx = eval(x->b, ctx, err, errsz);
+    hcl2_value *idx = hcl2_eval_node(x->b, ctx, err, errsz);
     if (idx == NULL) {
       hcl2_value_free(base);
       return NULL;
@@ -261,7 +261,7 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     return res;
   }
   case N_UNARY: {
-    hcl2_value *e = eval(x->a, ctx, err, errsz);
+    hcl2_value *e = hcl2_eval_node(x->a, ctx, err, errsz);
     if (e == NULL)
       return NULL;
     hcl2_value *res = NULL;
@@ -275,10 +275,10 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     return res;
   }
   case N_BINARY: {
-    hcl2_value *l = eval(x->a, ctx, err, errsz);
+    hcl2_value *l = hcl2_eval_node(x->a, ctx, err, errsz);
     if (l == NULL)
       return NULL;
-    hcl2_value *r = eval(x->b, ctx, err, errsz);
+    hcl2_value *r = hcl2_eval_node(x->b, ctx, err, errsz);
     if (r == NULL) {
       hcl2_value_free(l);
       return NULL;
@@ -286,7 +286,7 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     return eval_binary(x->op, l, r, err, errsz);
   }
   case N_COND: {
-    hcl2_value *c = eval(x->a, ctx, err, errsz);
+    hcl2_value *c = hcl2_eval_node(x->a, ctx, err, errsz);
     if (c == NULL)
       return NULL;
     if (c->kind != HCL2_BOOL) {
@@ -296,14 +296,14 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     }
     bool t = c->b;
     hcl2_value_free(c);
-    return eval(t ? x->b : x->c, ctx, err, errsz);
+    return hcl2_eval_node(t ? x->b : x->c, ctx, err, errsz);
   }
   case N_TUPLE: {
     hcl2_value *t = hcl2_tuple();
     if (!t)
       return NULL;
     for (size_t i = 0; i < x->n; i++) {
-      hcl2_value *e = eval(x->items[i], ctx, err, errsz);
+      hcl2_value *e = hcl2_eval_node(x->items[i], ctx, err, errsz);
       if (e == NULL || !hcl2_tuple_push(t, e)) {
         hcl2_value_free(e);
         hcl2_value_free(t);
@@ -317,7 +317,7 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     if (!o)
       return NULL;
     for (size_t i = 0; i < x->n; i++) {
-      hcl2_value *v = eval(x->items[i], ctx, err, errsz);
+      hcl2_value *v = hcl2_eval_node(x->items[i], ctx, err, errsz);
       if (v == NULL || !hcl2_object_set(o, x->keys[i], v)) {
         hcl2_value_free(v);
         hcl2_value_free(o);
@@ -342,7 +342,7 @@ static hcl2_value *eval(const struct node *x, hcl2_ctx *ctx, char *err, size_t e
     bool ok = true;
     size_t i = 0;
     for (; i < x->n; i++) {
-      args[i] = eval(x->items[i], ctx, err, errsz);
+      args[i] = hcl2_eval_node(x->items[i], ctx, err, errsz);
       if (args[i] == NULL) {
         ok = false;
         break;
@@ -381,7 +381,7 @@ hcl2_value *hcl2_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, siz
     everr(err, errsz, "trailing tokens after expression");
     return NULL;
   }
-  hcl2_value *v = eval(root, ctx, err, errsz);
+  hcl2_value *v = hcl2_eval_node(root, ctx, err, errsz);
   node_free(root);
   free(p.lx.text);
   return v;

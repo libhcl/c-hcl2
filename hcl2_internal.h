@@ -104,4 +104,32 @@ struct parser {
 void node_free(struct node *x);
 struct node *parse_expr(struct parser *p);
 
+/* expression-node evaluator (eval.c), used by body attribute decoding */
+hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz);
+
+/* --- configuration bodies (body.c) --- */
+struct hcl2_attr {
+  char *name;
+  struct node *expr; /* unevaluated; decoded lazily against a context */
+};
+struct hcl2_block {
+  char *type;
+  char **labels;
+  size_t nlabel;
+  struct hcl2_body *body;
+};
+struct hcl2_body {
+  struct hcl2_attr **attrs;
+  size_t nattr;
+  struct hcl2_block **blocks;
+  size_t nblock;
+};
+struct hcl2_doc {
+  struct hcl2_body *root;
+};
+/* Parse a body. A top-level body ends at EOF; a nested one ends at '}' (left as
+ * the current token, not consumed). Returns NULL on error. */
+struct hcl2_body *parse_body(struct parser *p, bool toplevel);
+void hcl2_body_free(struct hcl2_body *b);
+
 #endif /* C_HCL2_INTERNAL_H */

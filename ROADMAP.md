@@ -16,11 +16,19 @@ this is built milestone by milestone.
 - string templates with `${ expr }` interpolation (+ `$${` escape)
 - evaluation context (variables + user functions)
 
-## M2 — configuration bodies
+## M2 — configuration bodies ✅ (done)
 
-- top-level body: attributes (`name = expr`) and labeled blocks (`type "l" { }`)
+- top-level body: attributes (`name = expr`) and labeled blocks (`type "l" { }`),
+  arbitrarily nested
 - lazy/decoded evaluation of attribute expressions against a context
-- a c-hcl-compatible accessor layer (so c-hcl2 can subsume c-hcl)
+  (`hcl2_body_attr_value`) — the same document decodes against different bindings
+- a c-hcl-compatible accessor layer (`hcl2_doc`/`hcl2_body`/`hcl2_block`,
+  `hcl2_doc_root`, `hcl2_body_attr_*`, `hcl2_body_block_count`/`_at`,
+  `hcl2_block_type`/`_label`/`_body`) — so c-hcl2 can subsume c-hcl
+- `#`, `//`, and `/* */` comments in the lexer (benefits expressions too)
+
+  *Not yet:* newline-significant attribute termination (an attribute value is the
+  longest expression that parses); revisit with M4 diagnostics.
 
 ## M3 — template & collection expressions
 

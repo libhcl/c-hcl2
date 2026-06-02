@@ -20,8 +20,9 @@ in [ROADMAP.md](ROADMAP.md) and are **not** described below.
 ## 1. Lexical grammar
 
 The lexer (`lex()`) is a single-character-lookahead scanner over a byte buffer.
-It produces one token per call; there is **no comment syntax** in the expression
-lexer — only ASCII whitespace (`isspace`) separates tokens.
+It produces one token per call. Between tokens it skips ASCII whitespace
+(`isspace`) and comments: `#` and `//` line comments (to end of line) and
+`/* ... */` block comments (not nested — the first `*/` closes).
 
 ```
 NUMBER  = DIGIT { DIGIT | "." | "e" | "E" | exp-sign } ;
@@ -121,6 +122,48 @@ objitem     = ( IDENT | STRING ) ( "=" | ":" ) expr [ "," ] ;
 - **Object keys** — bare identifiers or quoted strings. The string-key form is
   parsed but the key is taken literally (template interpolation in keys is not
   evaluated at M1).
+
+---
+
+## 2b. Configuration bodies (M2)
+
+The grammar above (§2) is the **expression** sub-language reached through
+`hcl2_eval`. Milestone 2 adds the **body** grammar reached through `hcl2_parse`
+(`parse_body` in `body.c`): a document is a body of attributes and blocks.
+
+```ebnf
+document  = body EOF ;
+
+body      = { attribute | block } ;          (* nested bodies end at "}" *)
+
+attribute = IDENT "=" expr ;                 (* expr is the §2 grammar *)
+
+block     = IDENT { label } "{" body "}" ;
+label     = STRING | IDENT ;
+```
+
+Decoding is **lazy**: an attribute stores its unevaluated expression node, and
+`hcl2_body_attr_value(body, name, ctx, ...)` evaluates it against the supplied
+context on demand — so one parsed document can be decoded against different
+variable bindings. Blocks are walked structurally (`hcl2_body_block_count`/`_at`,
+`hcl2_block_type`/`_label`/`_body`); their attributes decode the same way.
+
+### Notes on bodies
+
+- **Attribute vs. block** — one token of lookahead after the name: a following
+  `=` makes it an attribute, otherwise the name is a block *type*, followed by
+  zero or more labels and a `{ ... }` body.
+- **Comments** — `#`, `//`, and `/* */` are all skipped (see §1); essential for
+  configuration files.
+- **No newline significance (yet)** — whitespace, including newlines, is not a
+  token here, so an attribute's value is the *longest expression that parses*.
+  For ordinary config (`a = 1` then `b = 2` on separate lines) this is
+  unambiguous because the next attribute begins with an `IDENT` that cannot
+  extend the previous expression. Pathological run-ons (`a = b -c`) bind as one
+  expression. Strict newline termination is deferred to the M4 diagnostics work.
+- **`{` is a block body here, never an object value** — in body position
+  `name { ... }` is a block; an object *value* only appears on the right of `=`
+  (`name = { k = v }`), where it is parsed by the §2 expression grammar.
 
 ---
 

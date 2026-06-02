@@ -30,8 +30,31 @@ static bool id_start(int c) { return isalpha(c) || c == '_'; }
 static bool id_char(int c) { return isalnum(c) || c == '_' || c == '-'; }
 
 void lex(struct lexer *l) {
-  while (l->p < l->end && isspace((unsigned char)*l->p))
-    l->p++;
+  /* Skip whitespace and comments between tokens: '#' and '//' line comments,
+     and '/' '*' ... '*' '/' block comments. */
+  for (;;) {
+    while (l->p < l->end && isspace((unsigned char)*l->p))
+      l->p++;
+    if (l->p < l->end && *l->p == '#') {
+      while (l->p < l->end && *l->p != '\n')
+        l->p++;
+      continue;
+    }
+    if (l->end - l->p >= 2 && l->p[0] == '/' && l->p[1] == '/') {
+      while (l->p < l->end && *l->p != '\n')
+        l->p++;
+      continue;
+    }
+    if (l->end - l->p >= 2 && l->p[0] == '/' && l->p[1] == '*') {
+      l->p += 2;
+      while (l->end - l->p >= 2 && !(l->p[0] == '*' && l->p[1] == '/'))
+        l->p++;
+      if (l->end - l->p >= 2)
+        l->p += 2; /* consume the closing delimiter */
+      continue;
+    }
+    break;
+  }
   if (l->p >= l->end) {
     l->tok = T_EOF;
     return;

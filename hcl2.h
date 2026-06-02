@@ -8,17 +8,20 @@
  * c-hcl2 -- a from-scratch C implementation of HCL2, the heavyweight companion
  * to libhcl/c-hcl (which parses only the declarative subset).
  *
- * STATUS: milestone 1 -- the HCL2 *expression* language and value model. This
- * is the part that distinguishes HCL2 from a plain config subset. Not yet
- * spec-complete; see ROADMAP.md (heredocs, for-expressions, splat, %{}
- * template directives, the JSON profile, the full cty type system with unknown
- * values, and source-range diagnostics are not done yet).
+ * STATUS: milestones 1-2 -- the HCL2 *expression* language + value model, and
+ * configuration *bodies* (attributes + labeled blocks) with lazy decoding
+ * against a context. Not yet spec-complete; see ROADMAP.md (heredocs,
+ * for-expressions, splat, %{} template directives, the JSON profile, the full
+ * cty type system with unknown values, and source-range diagnostics are not
+ * done yet).
  *
  * Implemented now: numbers, booleans, null, quoted-string templates with
  * `${ expr }` interpolation, tuples `[...]`, objects `{ k = v, ... }`, unary
  * `- !`, binary arithmetic `+ - * / %`, comparison `== != < <= > >=`, logical
  * `&& ||`, the conditional `cond ? a : b`, parentheses, variable references
- * with `.attr` / `[index]` traversal, and function calls against a context.
+ * with `.attr` / `[index]` traversal, and function calls against a context;
+ * plus document bodies via hcl2_parse (see the "configuration bodies" section
+ * below) with #, //, and `/* */` comments.
  */
 
 typedef enum {
@@ -68,5 +71,46 @@ bool hcl2_ctx_set_func(hcl2_ctx *ctx, const char *name, hcl2_func fn);
 /* Parse and evaluate a single HCL2 expression. ctx may be NULL (no variables,
  * builtins only). Returns an owned value, or NULL on error (message in err). */
 hcl2_value *hcl2_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, size_t errsz);
+
+/* --- configuration bodies (M2) ---
+ *
+ * A document is a body of attributes (`name = expr`) and (optionally labeled)
+ * blocks (`type "label" { ... }`). Parse once into an immutable tree, walk it
+ * with the accessors below, then free. Attribute *expressions* are kept
+ * unevaluated and decoded lazily, against a caller context, via
+ * hcl2_body_attr_value -- so the same document can be evaluated against
+ * different variable bindings.
+ *
+ *   hcl2_doc *doc = hcl2_parse(src, len, err, sizeof err);
+ *   const hcl2_body *root = hcl2_doc_root(doc);
+ *   hcl2_value *port = hcl2_body_attr_value(root, "port", ctx, err, sizeof err);
+ *   ... hcl2_value_free(port); ...
+ *   hcl2_doc_free(doc);
+ */
+typedef struct hcl2_doc hcl2_doc;
+typedef struct hcl2_body hcl2_body;
+typedef struct hcl2_block hcl2_block;
+
+/* Parse a whole document body. Returns NULL on error (message in err). */
+hcl2_doc *hcl2_parse(const char *src, size_t len, char *err, size_t errsz);
+void hcl2_doc_free(hcl2_doc *doc);
+const hcl2_body *hcl2_doc_root(const hcl2_doc *doc);
+
+/* --- body: attributes --- */
+size_t hcl2_body_attr_count(const hcl2_body *b);
+const char *hcl2_body_attr_name(const hcl2_body *b, size_t i); /* i-th attr name, or NULL */
+bool hcl2_body_has_attr(const hcl2_body *b, const char *name);
+/* Evaluate the named attribute's expression against ctx (which may be NULL).
+ * Returns an owned value, or NULL if absent or on evaluation error (err set). */
+hcl2_value *hcl2_body_attr_value(const hcl2_body *b, const char *name, hcl2_ctx *ctx, char *err,
+                                 size_t errsz);
+
+/* --- body: blocks --- (type == NULL matches blocks of every type) */
+size_t hcl2_body_block_count(const hcl2_body *b, const char *type);
+const hcl2_block *hcl2_body_block_at(const hcl2_body *b, const char *type, size_t idx);
+const char *hcl2_block_type(const hcl2_block *bl);
+size_t hcl2_block_label_count(const hcl2_block *bl);
+const char *hcl2_block_label(const hcl2_block *bl, size_t i);
+const hcl2_body *hcl2_block_body(const hcl2_block *bl);
 
 #endif /* C_HCL2_HCL2_H */
