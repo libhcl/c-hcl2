@@ -169,6 +169,15 @@ int main(void) {
   check("for err unterminated", fails("[for x in [1] : x", NULL));
   check("for err missing fatarrow", fails("{for k, v in {a=1} : k v}", NULL));
 
+  /* ---- M3: variadic call spread (...) ---- */
+  check("spread max", isnum(ev("max([1, 5, 3]...)", NULL), 5));
+  check("spread min", isnum(ev("min([4, 2, 8]...)", NULL), 2));
+  check("spread mixed args", isnum(ev("max(9, [1, 5]...)", NULL), 9));
+  check("spread from for", isnum(ev("max([for x in [3, 7, 2] : x * 2]...)", NULL), 14));
+  check("spread length one", isnum(ev("length([[1, 2, 3]][0])", NULL), 3));
+  check("spread err not tuple", fails("max(5...)", NULL));
+  check("spread err empty to max", fails("max([]...)", NULL));
+
   /* ---- M3: heredocs ---- */
   check("heredoc basic", isstr(ev("<<EOF\nhello\nworld\nEOF\n", NULL), "hello\nworld\n"));
   check("heredoc empty body", isstr(ev("<<EOF\nEOF\n", NULL), ""));

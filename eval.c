@@ -762,8 +762,35 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
       }
     }
     hcl2_value *res = NULL;
-    if (ok)
+    if (ok && x->op == T_ELLIPSIS) {
+      /* spread: the final argument must be a tuple whose elements become the
+         trailing arguments. f(a, xs...) => f(a, xs[0], xs[1], ...) */
+      hcl2_value *last = args[x->n - 1];
+      if (last->kind != HCL2_TUPLE) {
+        everr(err, errsz, "the '...' spread argument must be a tuple");
+      } else {
+        size_t fc = (x->n - 1) + last->n;
+        hcl2_value **fa = fc ? calloc(fc, sizeof(*fa)) : NULL;
+        if (fc == 0 || fa != NULL) {
+          bool cok = true;
+          for (size_t j = 0; j + 1 < x->n; j++)
+            fa[j] = args[j]; /* borrowed; freed via args below */
+          size_t made = 0;
+          for (; cok && made < last->n; made++) {
+            fa[x->n - 1 + made] = vclone(last->items[made]);
+            if (fa[x->n - 1 + made] == NULL)
+              cok = false;
+          }
+          if (cok)
+            res = fn((const hcl2_value *const *)fa, fc, err, errsz);
+          for (size_t j = 0; j < made; j++) /* free only the clones we own */
+            hcl2_value_free(fa[x->n - 1 + j]);
+          free(fa);
+        }
+      }
+    } else if (ok) {
       res = fn((const hcl2_value *const *)args, x->n, err, errsz);
+    }
     for (size_t j = 0; j < i; j++)
       hcl2_value_free(args[j]);
     free(args);

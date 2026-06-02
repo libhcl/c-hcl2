@@ -67,6 +67,7 @@ enum tok {
   T_NOT,
   T_FATARROW, /* => (object for-expression) */
   T_HEREDOC,  /* <<EOF / <<-EOF heredoc; text holds the raw (de-indented) body */
+  T_ELLIPSIS, /* ... (variadic call-argument spread) */
 };
 struct lexer {
   const char *p, *end;

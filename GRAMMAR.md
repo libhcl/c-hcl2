@@ -59,7 +59,7 @@ Punctuation / operator tokens:
 | `T_STAR`  | `*`    | `T_SLASH`| `/`    |
 | `T_PCT`   | `%`    | `T_AND`  | `&&`   |
 | `T_OR`    | `\|\|` | `T_FATARROW` | `=>` |
-| `T_HEREDOC` | `<<EOF` / `<<-EOF` | | |
+| `T_HEREDOC` | `<<EOF` / `<<-EOF` | `T_ELLIPSIS` | `...` |
 
 `&` not followed by `&`, and `|` not followed by `|`, are lexer errors. Any
 other byte that starts none of the above is `T_ERR` ("invalid character").
@@ -99,7 +99,9 @@ primary     = NUMBER
             | tuple   | tuple-for
             | object  | object-for ;
 
-args        = expr { "," expr } [ "," ] ;    (* trailing comma allowed *)
+args        = [ expr { "," expr } [ "..." | "," ] ] ;
+              (* trailing comma allowed; a trailing "..." on the LAST argument
+                 spreads a tuple's elements as the final arguments — see §6 *)
 
 tuple       = "[" [ expr { "," expr } [ "," ] ] "]" ;
               (* comma-separated; trailing comma allowed; may be empty *)
@@ -297,3 +299,11 @@ The parser emits these `enum nkind` nodes (`hcl2_internal.h`):
 Resolved by `builtin_func()` after user-supplied context functions. Milestone 1
 ships: `length`, `upper`, `lower`, `min`, `max`. Additional functions are
 provided by the caller via `hcl2_ctx_set_func`.
+
+### Variadic spread (M3)
+
+When the last argument of a call is followed by `...`, it must evaluate to a
+tuple; its elements are spliced in as the trailing arguments:
+`max(9, [1, 5]...)` is evaluated as `max(9, 1, 5)`. Spreading a non-tuple is an
+error. The function still sees a flat argument list, so this composes with the
+N-ary builtins (`min`/`max`) and any caller-registered function.

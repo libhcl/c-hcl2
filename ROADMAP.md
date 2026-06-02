@@ -30,7 +30,7 @@ this is built milestone by milestone.
   *Not yet:* newline-significant attribute termination (an attribute value is the
   longest expression that parses); revisit with M4 diagnostics.
 
-## M3 — template & collection expressions (in progress)
+## M3 — template & collection expressions ✅ (done)
 
 - ✅ `for`-expressions: tuple `[for x in xs : f(x)]`, object
   `{for k, v in m : k => v}`, the `k, v` key/index variable, and `if` filters
@@ -40,7 +40,9 @@ this is built milestone by milestone.
   the body is a template (honours `${ }`) but keeps backslashes literal
 - ✅ `%{ if }` / `%{ else }` / `%{ endif }` and `%{ for }` / `%{ endfor }`
   template directives (nestable; `$${` and `%%{` escapes)
-- ⬜ string-index, `...` (variadic) call expansion
+- ✅ `...` (variadic) call expansion: `f(a, xs...)` spreads a tuple's elements
+  as the trailing arguments. (String indexing is not part of HCL — strings are
+  scalars in the `cty`-lite model — so it is intentionally absent.)
 
 ## M4 — type system & diagnostics
 

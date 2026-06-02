@@ -191,6 +191,11 @@ void lex(struct lexer *l) {
     l->tok = T_COMMA;
     return;
   case '.':
+    if (l->end - l->p >= 3 && l->p[1] == '.' && l->p[2] == '.') {
+      l->p += 3;
+      l->tok = T_ELLIPSIS;
+      return;
+    }
     l->p++;
     l->tok = T_DOT;
     return;
@@ -317,6 +322,10 @@ void lex(struct lexer *l) {
     const char *start = l->p;
     while (l->p < l->end && (isdigit((unsigned char)*l->p) || *l->p == '.' || *l->p == 'e' ||
                              *l->p == 'E' || *l->p == '+' || *l->p == '-')) {
+      /* a '.' followed by another '.' is never part of a number — it begins a
+         `...` spread, e.g. `xs[5]...` or `5...` */
+      if (*l->p == '.' && l->p + 1 < l->end && l->p[1] == '.')
+        break;
       /* allow exponent sign only right after e/E */
       if ((*l->p == '+' || *l->p == '-') && !(l->p > start && (l->p[-1] == 'e' || l->p[-1] == 'E')))
         break;

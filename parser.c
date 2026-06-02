@@ -214,6 +214,11 @@ static struct node *parse_primary(struct parser *p) {
         }
         x->items = ni;
         x->items[x->n++] = arg;
+        if (l->tok == T_ELLIPSIS) { /* spread: must be the final argument */
+          x->op = T_ELLIPSIS;
+          lex(l);
+          break;
+        }
         if (l->tok == T_COMMA) {
           lex(l);
           continue;

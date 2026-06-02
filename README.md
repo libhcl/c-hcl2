@@ -5,13 +5,15 @@ A from-scratch C implementation of **HCL2** — the heavyweight companion to
 declarative subset). Use c-hcl when you want a tiny config reader; use c-hcl2
 when you need the **expression language**.
 
-> **Status: milestones 1–2 — expression engine + configuration bodies.** This
-> is *not* yet a spec-complete HCL2. What works today is the HCL2 expression
-> sub-language, a cty-lite value model, and document bodies (attributes +
-> labeled blocks) with lazy decoding against a context; what's missing is
-> tracked in [ROADMAP.md](ROADMAP.md) (heredocs, `%{ }` template directives,
-> the JSON profile, the full `cty` type system with unknowns, and source-range
-> diagnostics). It is honest about being a work in progress.
+> **Status: milestones 1–3 — expression engine, configuration bodies, and the
+> template & collection expressions.** This is *not* yet a spec-complete HCL2.
+> What works today is the HCL2 expression sub-language, a cty-lite value model,
+> document bodies (attributes + labeled blocks) with lazy decoding against a
+> context, and the M3 surface (for-expressions, splat, heredocs, `%{ }`
+> directives, variadic spread); what's missing is tracked in
+> [ROADMAP.md](ROADMAP.md) (the JSON profile, the full `cty` type system with
+> unknowns, and source-range diagnostics). It is honest about being a work in
+> progress.
 
 ## What works now
 
@@ -23,8 +25,9 @@ references with `.attr` / `[index]` traversal, function calls — evaluated
 against a context of variables and functions (builtins: `length`, `upper`,
 `lower`, `min`, `max`) — plus **for-expressions** (`[for x in xs : x*2 if x>0]`,
 `{for k, v in m : k => v}`), **splat** (`xs[*].name`), **heredocs**
-(`<<EOF` / indented `<<-EOF`), and **template directives**
-(`%{ if }`/`%{ else }`/`%{ endif }`, `%{ for }`/`%{ endfor }`).
+(`<<EOF` / indented `<<-EOF`), **template directives**
+(`%{ if }`/`%{ else }`/`%{ endif }`, `%{ for }`/`%{ endfor }`), and **variadic
+spread** (`max(xs...)`).
 
 **Configuration bodies** (`hcl2_parse`): documents of attributes
 (`name = expr`) and nested, optionally labeled blocks (`type "label" { ... }`),
