@@ -21,6 +21,10 @@ interpolation, tuples `[...]`, objects `{ k = v, ... }`, unary `- !`, binary
 traversal, and function calls — evaluated against a context of variables and
 functions (builtins: `length`, `upper`, `lower`, `min`, `max`).
 
+The exact grammar that is parsed today — lexical tokens, EBNF productions, the
+Pratt operator-precedence table, and the template rules — is documented in
+[GRAMMAR.md](GRAMMAR.md).
+
 ```c
 #include "hcl2.h"
 
