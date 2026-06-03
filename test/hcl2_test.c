@@ -261,6 +261,43 @@ int main(void) {
     hcl2_doc_free(d);
   }
 
+  /* stdlib builtins */
+  check("bi concat", isnum(ev("length(concat([1, 2], [3], [4, 5]))", NULL), 5));
+  check("bi keys", isstr(ev("join(\",\", keys({b = 1, a = 2}))", NULL), "b,a"));
+  check("bi values sum", isnum(ev("length(values({a = 1, b = 2}))", NULL), 2));
+  check("bi contains yes", isbool(ev("contains([1, 2, 3], 2)", NULL), true));
+  check("bi contains no", isbool(ev("contains([1, 2], 9)", NULL), false));
+  check("bi lookup hit", isnum(ev("lookup({a = 1}, \"a\", 0)", NULL), 1));
+  check("bi lookup miss", isnum(ev("lookup({a = 1}, \"z\", 7)", NULL), 7));
+  check("bi coalesce", isnum(ev("coalesce(null, null, 3, 4)", NULL), 3));
+  check("bi join", isstr(ev("join(\"-\", [\"a\", \"b\", \"c\"])", NULL), "a-b-c"));
+  check("bi split", isnum(ev("length(split(\",\", \"a,b,c\"))", NULL), 3));
+  check("bi split empty sep", isstr(ev("split(\"\", \"hi\")[0]", NULL), "hi"));
+  check("bi abs", isnum(ev("abs(-5)", NULL), 5));
+  check("bi floor", isnum(ev("floor(2.9)", NULL), 2));
+  check("bi ceil", isnum(ev("ceil(2.1)", NULL), 3));
+  check("bi tostring", isstr(ev("tostring(42)", NULL), "42"));
+  check("bi tonumber", isnum(ev("tonumber(\"3.5\")", NULL), 3.5));
+  check("bi tobool", isbool(ev("tobool(\"true\")", NULL), true));
+  check("bi jsondecode", isnum(ev("jsondecode(\"{\\\"x\\\": 7}\").x", NULL), 7));
+  check("bi jsonencode", isstr(ev("jsonencode([1, true, \"a\"])", NULL), "[1,true,\"a\"]"));
+  check("bi jsonencode obj", isstr(ev("jsonencode({k = \"v\"})", NULL), "{\"k\":\"v\"}"));
+  check("bi jsonencode roundtrip", isnum(ev("jsondecode(jsonencode({n = 5})).n", NULL), 5));
+  /* builtin error cases */
+  check("bi concat bad", fails("concat([1], 2)", NULL));
+  check("bi join bad elem", fails("join(\",\", [1])", NULL));
+  check("bi keys bad", fails("keys([1, 2])", NULL));
+  check("bi abs bad", fails("abs(\"x\")", NULL));
+  check("bi tonumber bad", fails("tonumber(\"abc\")", NULL));
+  /* unknown still propagates through builtins (handled at the call site) */
+  {
+    hcl2_ctx *uc = hcl2_ctx_new();
+    hcl2_ctx_set_var(uc, "u", hcl2_unknown());
+    check("bi unknown arg", evunk("jsonencode(u)", uc));
+    check("bi concat unknown", evunk("concat(u, [1])", uc));
+    hcl2_ctx_free(uc);
+  }
+
   /* M5 (partial): JSON value parsing */
   {
     char err[256] = "";
@@ -644,6 +681,11 @@ int main(void) {
         "[[1, 2], [3]][0]",
         "max([1, 2, 3]...)",
         "max(9, [1, 5]...)",
+        "join(\",\", split(\";\", \"a;b;c\"))",
+        "jsonencode({a = [1, true, \"s\"], b = null})",
+        "jsondecode(\"[1,2,{\\\"k\\\":3}]\")",
+        "concat([1], keys({a = 1}))",
+        "coalesce(null, lookup({x = 5}, \"x\", 0))",
         "\"%{ if true }${1}%{ else }no%{ endif }\"",
         "\"%{ for n in [1, 2, 3] }${n},%{ endfor }\"",
         "<<EOF\nhi ${1 + 1}\nEOF\n",

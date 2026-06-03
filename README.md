@@ -22,8 +22,11 @@ when you need the **expression language**.
 `{ k = v, ... }`, unary `- !`, binary `+ - * / %`, comparison `== != < <= > >=`,
 logical `&& ||`, the conditional `cond ? a : b`, parentheses, variable
 references with `.attr` / `[index]` traversal, function calls — evaluated
-against a context of variables and functions (builtins: `length`, `upper`,
-`lower`, `min`, `max`) — plus **for-expressions** (`[for x in xs : x*2 if x>0]`,
+against a context of variables and functions (a small standard library:
+`length`, `upper`, `lower`, `min`, `max`, `abs`, `floor`, `ceil`, `join`,
+`split`, `concat`, `keys`, `values`, `contains`, `lookup`, `coalesce`,
+`tostring`, `tonumber`, `tobool`, `jsonencode`, `jsondecode`) — plus
+**for-expressions** (`[for x in xs : x*2 if x>0]`,
 `{for k, v in m : k => v}`), **splat** (`xs[*].name`), **heredocs**
 (`<<EOF` / indented `<<-EOF`), **template directives**
 (`%{ if }`/`%{ else }`/`%{ endif }`, `%{ for }`/`%{ endfor }`), and **variadic

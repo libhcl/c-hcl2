@@ -297,7 +297,10 @@ The parser emits these `enum nkind` nodes (`hcl2_internal.h`):
 ## 6. Built-in functions (evaluation context)
 
 Resolved by `builtin_func()` after user-supplied context functions. Milestone 1
-ships: `length`, `upper`, `lower`, `min`, `max`. Additional functions are
+ships a small standard library: `length`, `upper`, `lower`, `min`, `max`,
+`abs`, `floor`, `ceil`, `join`, `split`, `concat`, `keys`, `values`, `contains`,
+`lookup`, `coalesce`, `tostring`, `tonumber`, `tobool`, `jsonencode`,
+`jsondecode`. Additional functions are
 provided by the caller via `hcl2_ctx_set_func`.
 
 ### Variadic spread (M3)
