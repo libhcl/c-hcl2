@@ -12,10 +12,11 @@
  * language + value model, configuration *bodies* with lazy decoding, the
  * template & collection expressions (for, splat, heredocs, %{} directives,
  * variadic spread), line/column diagnostics, type constraints + conversion
- * (hcl2_type_* / hcl2_convert), and unknown values (hcl2_unknown). Not yet
- * spec-complete; see ROADMAP.md (the JSON profile's schema-driven body layer,
- * the distinct cty collection kinds and type-tracked unknowns, and full source
- * ranges are not done yet; the JSON *value* layer via hcl2_parse_json IS).
+ * (hcl2_type_* / hcl2_convert), the distinct cty collection kinds (list/set/
+ * map), and unknown values (hcl2_unknown). Not yet spec-complete; see
+ * ROADMAP.md (the JSON profile's schema-driven body layer, type-tracked
+ * unknowns, big-number precision, and full source ranges are not done yet; the
+ * JSON *value* layer via hcl2_parse_json IS).
  *
  * Implemented now: numbers, booleans, null, quoted-string templates with
  * `${ expr }` interpolation, tuples `[...]`, objects `{ k = v, ... }`, unary
