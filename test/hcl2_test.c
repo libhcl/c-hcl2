@@ -261,6 +261,24 @@ int main(void) {
     hcl2_doc_free(d);
   }
 
+  /* try() / can() special forms */
+  check("try first ok", isnum(ev("try(1 + 1)", NULL), 2));
+  check("try fallback", isnum(ev("try(nope, 42)", NULL), 42));
+  check("try chain", isstr(ev("try(nope, alsono, \"fb\")", NULL), "fb"));
+  check("try optional attr", isnum(ev("try({a = 1}.b, 99)", NULL), 99));
+  check("try all fail", fails("try(nope)", NULL));
+  check("try zero args", fails("try()", NULL));
+  check("can ok", isbool(ev("can(1 + 1)", NULL), true));
+  check("can err", isbool(ev("can(nope)", NULL), false));
+  check("can arity", fails("can(1, 2)", NULL));
+  {
+    hcl2_ctx *uc = hcl2_ctx_new();
+    hcl2_ctx_set_var(uc, "u", hcl2_unknown());
+    check("try unknown", evunk("try(u, 1)", uc));
+    check("can unknown", evunk("can(u)", uc));
+    hcl2_ctx_free(uc);
+  }
+
   /* stdlib builtins */
   check("bi concat", isnum(ev("length(concat([1, 2], [3], [4, 5]))", NULL), 5));
   check("bi keys", isstr(ev("join(\",\", keys({b = 1, a = 2}))", NULL), "b,a"));

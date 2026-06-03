@@ -300,7 +300,10 @@ Resolved by `builtin_func()` after user-supplied context functions. Milestone 1
 ships a small standard library: `length`, `upper`, `lower`, `min`, `max`,
 `abs`, `floor`, `ceil`, `join`, `split`, `concat`, `keys`, `values`, `contains`,
 `lookup`, `coalesce`, `tostring`, `tonumber`, `tobool`, `jsonencode`,
-`jsondecode`. Additional functions are
+`jsondecode`. Two **special forms** evaluate their arguments lazily with errors
+suppressed: `try(expr, ...)` (the first argument that evaluates without error)
+and `can(expr)` (whether it evaluates without error -> bool). Additional
+functions are
 provided by the caller via `hcl2_ctx_set_func`.
 
 ### Variadic spread (M3)

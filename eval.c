@@ -667,6 +667,39 @@ static hcl2_value *eval_for(const struct node *x, hcl2_ctx *ctx, char *err, size
   return result;
 }
 
+/* try(expr, ...): the first argument that evaluates without error (an unknown
+ * counts as success and is returned). can(expr): whether expr evaluates without
+ * error -> bool (or unknown if expr is unknown). Both are "special forms": their
+ * arguments are evaluated lazily with errors suppressed, which a regular builtin
+ * (whose arguments are pre-evaluated) cannot do. */
+static hcl2_value *eval_try(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz) {
+  if (x->n == 0) {
+    everr_node(err, errsz, "try() needs at least one argument", x);
+    return NULL;
+  }
+  for (size_t i = 0; i < x->n; i++) {
+    char scratch[64] = "";
+    hcl2_value *v = hcl2_eval_node(x->items[i], ctx, scratch, sizeof(scratch));
+    if (v != NULL)
+      return v; /* success (an unknown is a successful, if unknown, result) */
+  }
+  everr_node(err, errsz, "try(): all arguments produced errors", x);
+  return NULL;
+}
+static hcl2_value *eval_can(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz) {
+  if (x->n != 1) {
+    everr_node(err, errsz, "can() takes 1 argument", x);
+    return NULL;
+  }
+  char scratch[64] = "";
+  hcl2_value *v = hcl2_eval_node(x->items[0], ctx, scratch, sizeof(scratch));
+  if (v == NULL)
+    return hcl2_bool(false);
+  bool unk = is_unknown(v);
+  hcl2_value_free(v);
+  return unk ? hcl2_unknown() : hcl2_bool(true);
+}
+
 hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_t errsz) {
   switch (x->kind) {
   case N_LIT:
@@ -810,6 +843,14 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     return o;
   }
   case N_CALL: {
+    /* try()/can() are special forms (lazy args); a caller may still override
+       them by registering a context function of the same name. */
+    if (ctx_func(ctx, x->str) == NULL) {
+      if (strcmp(x->str, "try") == 0)
+        return eval_try(x, ctx, err, errsz);
+      if (strcmp(x->str, "can") == 0)
+        return eval_can(x, ctx, err, errsz);
+    }
     hcl2_func fn = ctx_func(ctx, x->str);
     if (fn == NULL)
       fn = builtin_func(x->str);
