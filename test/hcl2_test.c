@@ -520,8 +520,15 @@ int main(void) {
     hcl2_tuple_push(people, p1);
     hcl2_tuple_push(people, p2);
     hcl2_ctx_set_var(ctx, "people", people);
-    check("splat attr", isstr(ev("people[*].name[1]", ctx), "alan"));
+    /* splat captures the whole following traversal (HCL semantics): the
+       result is a tuple, inspected here via jsonencode/length/join. */
+    check("splat attr", isstr(ev("jsonencode(people[*].name)", ctx), "[\"ada\",\"alan\"]"));
     check("splat len", isnum(ev("length(people[*].name)", ctx), 2));
+    check("legacy splat .*", isstr(ev("join(\",\", people.*.name)", ctx), "ada,alan"));
+    /* index trailer inside the splat: [*].a[0] maps per element -> [10, 30] */
+    check("splat index trailer",
+          isstr(ev("jsonencode([{a = [10, 20]}, {a = [30, 40]}][*].a[0])", NULL), "[10,30]"));
+    check("splat chained err", fails("people[*][*]", ctx));
     /* loop var does not leak into the surrounding scope */
     check("for scope clean", fails("[for z in [1] : z][0] + z", ctx));
     hcl2_ctx_free(ctx);

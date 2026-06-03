@@ -88,7 +88,8 @@ unary       = ( "-" | "!" ) unary
 
 postfix     = primary { "." IDENT          (* attribute access  *)
                       | "[" expr "]"        (* index / element   *)
-                      | "[" "*" "]" { "." IDENT } } ;  (* splat — see below *)
+                      | splat } ;           (* see "Splat" below *)
+splat       = ( "[" "*" "]" | "." "*" ) { "." IDENT | "[" expr "]" } ;
 
 primary     = NUMBER
             | STRING                         (* a template — see §4 *)
@@ -121,11 +122,12 @@ object-for  = "{" forintro expr "=>" expr [ "if" expr ] "}" ;
 
 ### Splat
 
-`xs[*]` followed by attribute trailers desugars to a tuple for-expression:
-`xs[*].a.b` is parsed as `[for $splat in xs : $splat.a.b]`. The `$splat`
-internal variable cannot collide with a real one (identifiers can't contain
-`$`). **Not yet supported:** index trailers after a splat (`xs[*][0]`) or
-chained splats (`xs[*].a[*]`); only `.attr` chains follow `[*]`.
+Both the full splat `xs[*]` and the legacy attribute-only splat `xs.*` are
+supported. A splat captures the whole following relative traversal — a chain of
+`.attr` and `[index]` — and desugars to a tuple for-expression: `xs[*].a[0].b`
+parses as `[for $splat in xs : $splat.a[0].b]` (the `$splat` internal variable
+can't collide — identifiers can't contain `$`). **Not yet supported:** chained
+splats (`xs[*][*]`, `xs.*.*`), which are rejected with a clear error.
 
 ### Notes on the productions
 

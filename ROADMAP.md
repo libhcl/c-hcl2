@@ -88,8 +88,10 @@ by impact:
 - ✅ string escapes `\uNNNN` / `\UNNNNNNNN` (UTF-8) — done
 - ✅ template whitespace trimming `${~ ~}` / `%{~ ~}` (strip the adjacent run of
   whitespace, on interpolations and all directives) — done
-- ⬜ legacy attribute-only splat `list.*.attr` (we have full splat `list[*]`)
-- ⬜ index/chained trailers after a splat (`xs[*][0]`, `xs[*].a[*]`)
+- ✅ legacy attribute-only splat `list.*.attr` — done
+- ✅ a splat now captures the whole following relative traversal — `.attr` and
+  `[index]` trailers (`xs[*].a[0]`) map per element, matching HCL. *Still
+  unsupported:* chained splats (`xs[*][*]`, `.*.* `), rejected with a clear error
 - ⬜ object-`for` grouping mode `{for ... : k => v...}`
 - ⬜ distinct cty collection kinds (list/set/map vs tuple/object) + the
   tuple-vs-list distinction; type-tracked unknowns

@@ -361,6 +361,101 @@ static struct node *parse_primary(struct parser *p) {
   }
 }
 
+/* Build a splat from a collection node `coll` (ownership transferred): the
+ * `[*]` or `.*` marker has been consumed; this consumes the following relative
+ * traversal (a chain of `.attr` and `[index]`) and desugars the whole thing to
+ * `[for $splat in coll : $splat <traversal>]`. A chained splat (`[*][*]`,
+ * `.*.* `) is rejected. Returns NULL on error, freeing `coll`. */
+static struct node *build_splat(struct parser *p, struct node *coll) {
+  struct lexer *l = &p->lx;
+  struct node *body = nnew(N_VAR);
+  if (body == NULL) {
+    node_free(coll);
+    return NULL;
+  }
+  body->str = strdup("$splat");
+  if (body->str == NULL) {
+    node_free(body);
+    node_free(coll);
+    return NULL;
+  }
+  for (;;) {
+    if (l->tok == T_DOT) {
+      lex(l);
+      if (l->tok != T_IDENT) {
+        lx_err(l, l->tok == T_STAR ? "chained splat is not supported"
+                                   : "expected attribute name after '.' in splat");
+        node_free(body);
+        node_free(coll);
+        return NULL;
+      }
+      struct node *at = nnew(N_ATTR);
+      if (at == NULL) {
+        node_free(body);
+        node_free(coll);
+        return NULL;
+      }
+      at->a = body;
+      body = at;
+      at->str = strdup(l->text);
+      if (at->str == NULL) {
+        node_free(body);
+        node_free(coll);
+        return NULL;
+      }
+      lex(l);
+    } else if (l->tok == T_LB) {
+      lex(l);
+      if (l->tok == T_STAR) {
+        lx_err(l, "chained splat is not supported");
+        node_free(body);
+        node_free(coll);
+        return NULL;
+      }
+      struct node *idx = parse_expr(p);
+      if (idx == NULL) {
+        node_free(body);
+        node_free(coll);
+        return NULL;
+      }
+      if (l->tok != T_RB) {
+        lx_err(l, "expected ']' after index");
+        node_free(idx);
+        node_free(body);
+        node_free(coll);
+        return NULL;
+      }
+      lex(l);
+      struct node *ix = nnew(N_INDEX);
+      if (ix == NULL) {
+        node_free(idx);
+        node_free(body);
+        node_free(coll);
+        return NULL;
+      }
+      ix->a = body;
+      ix->b = idx;
+      body = ix;
+    } else {
+      break;
+    }
+  }
+  struct node *f = nnew(N_FOR_TUPLE);
+  if (f == NULL) {
+    node_free(body);
+    node_free(coll);
+    return NULL;
+  }
+  f->a = coll;
+  f->b = body;
+  f->str = strdup("$splat");
+  if (f->str == NULL) {
+    node_free(f);
+    return NULL;
+  }
+  return f;
+}
+
 static struct node *parse_postfix(struct parser *p) {
   struct node *e = parse_primary(p);
   if (e == NULL)
@@ -370,6 +465,13 @@ static struct node *parse_postfix(struct parser *p) {
     if (l->tok == T_DOT) {
       const char *dotpos = l->tokpos;
       lex(l);
+      if (l->tok == T_STAR) { /* legacy attribute splat: e.*.attr */
+        lex(l);
+        e = build_splat(p, e);
+        if (e == NULL)
+          return NULL;
+        continue;
+      }
       if (l->tok != T_IDENT) {
         node_free(e);
         PERR(p, "expected attribute name after '.'");
@@ -391,62 +493,16 @@ static struct node *parse_postfix(struct parser *p) {
     } else if (l->tok == T_LB) {
       const char *lbpos = l->tokpos;
       lex(l);
-      if (l->tok == T_STAR) {
-        /* splat: xs[*].a.b  desugars to  [for $splat in xs : $splat.a.b] */
+      if (l->tok == T_STAR) { /* full splat: e[*]<traversal> */
         lex(l);
         if (l->tok != T_RB) {
           node_free(e);
           PERR(p, "expected ']' after '[*]'");
         }
         lex(l);
-        struct node *body = nnew(N_VAR);
-        if (body == NULL) {
-          node_free(e);
+        e = build_splat(p, e);
+        if (e == NULL)
           return NULL;
-        }
-        body->str = strdup("$splat");
-        if (body->str == NULL) {
-          node_free(body);
-          node_free(e);
-          return NULL;
-        }
-        while (l->tok == T_DOT) { /* attribute trailers map over each element */
-          lex(l);
-          if (l->tok != T_IDENT) {
-            node_free(body);
-            node_free(e);
-            PERR(p, "expected attribute name after '.'");
-          }
-          struct node *at = nnew(N_ATTR);
-          if (at == NULL) {
-            node_free(body);
-            node_free(e);
-            return NULL;
-          }
-          at->a = body;
-          at->str = strdup(l->text);
-          if (at->str == NULL) {
-            node_free(at);
-            node_free(e);
-            return NULL;
-          }
-          lex(l);
-          body = at;
-        }
-        struct node *f = nnew(N_FOR_TUPLE);
-        if (f == NULL) {
-          node_free(body);
-          node_free(e);
-          return NULL;
-        }
-        f->a = e;
-        f->b = body;
-        f->str = strdup("$splat");
-        if (f->str == NULL) {
-          node_free(f);
-          return NULL;
-        }
-        e = f;
         continue;
       }
       struct node *idx = parse_expr(p);
