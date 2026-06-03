@@ -114,6 +114,19 @@ static bool oom_scan_doc(const char *s) {
   }
   return false;
 }
+static bool oom_scan_json(const char *s) {
+  for (int b = 0; b <= 5000; b++) {
+    hcl2_alloc_budget = b;
+    char err[256] = "";
+    hcl2_value *v = hcl2_parse_json(s, strlen(s), err, sizeof(err));
+    hcl2_alloc_budget = -1;
+    if (v) {
+      hcl2_value_free(v);
+      return true;
+    }
+  }
+  return false;
+}
 #endif
 
 int main(void) {
@@ -246,6 +259,74 @@ int main(void) {
     check("diag deferred null", v == NULL);
     check("diag deferred pos line 3", strstr(err, "line 3, column 5") != NULL);
     hcl2_doc_free(d);
+  }
+
+  /* M5 (partial): JSON value parsing */
+  {
+    char err[256] = "";
+    const char *s = "{\"name\": \"demo\", \"port\": 8080, \"on\": true, "
+                    "\"tags\": [\"a\", \"b\"], \"meta\": null}";
+    hcl2_value *v = hcl2_parse_json(s, strlen(s), err, sizeof(err));
+    check("json parse ok", v != NULL && hcl2_value_kind(v) == HCL2_OBJECT);
+    check("json string", v && strcmp(hcl2_value_as_string(hcl2_value_get(v, "name")), "demo") == 0);
+    double d;
+    check("json number", v && hcl2_value_as_number(hcl2_value_get(v, "port"), &d) && d == 8080);
+    bool b;
+    check("json bool", v && hcl2_value_as_bool(hcl2_value_get(v, "on"), &b) && b);
+    check("json null", v && hcl2_value_kind(hcl2_value_get(v, "meta")) == HCL2_NULL);
+    const hcl2_value *tags = v ? hcl2_value_get(v, "tags") : NULL;
+    check("json array", tags && hcl2_value_kind(tags) == HCL2_TUPLE && hcl2_value_len(tags) == 2);
+    hcl2_value_free(v);
+  }
+  {
+    char err[256] = "";
+    const char *s = "[1, [2, 3], {\"k\": -4.5e1}]";
+    hcl2_value *v = hcl2_parse_json(s, strlen(s), err, sizeof(err));
+    double d;
+    const hcl2_value *inner = v ? hcl2_value_at(v, 2) : NULL;
+    check("json nested",
+          inner && hcl2_value_as_number(hcl2_value_get(inner, "k"), &d) && d == -45.0);
+    hcl2_value_free(v);
+  }
+  {
+    const char *s = "\"a\\nb\\u0041\"";
+    check("json escapes", isstr(hcl2_parse_json(s, strlen(s), NULL, 0), "a\nbA"));
+    /* 3-byte UTF-8 from a \u escape: U+4E2D */
+    const char *s3 = "\"\\u4e2d\"";
+    check("json u 3-byte", isstr(hcl2_parse_json(s3, strlen(s3), NULL, 0), "\xe4\xb8\xad"));
+  }
+  {
+    /* JSON parses into the value model, so the conversion layer applies */
+    char err[256] = "";
+    const char *s = "[\"1\", \"2\", \"2\"]";
+    hcl2_value *src = hcl2_parse_json(s, strlen(s), err, sizeof(err));
+    hcl2_type *t = hcl2_type_set(hcl2_type_number());
+    hcl2_value *out = hcl2_convert(src, t, err, sizeof(err));
+    check("json + convert", out && hcl2_value_len(out) == 2);
+    hcl2_value_free(out);
+    hcl2_value_free(src);
+    hcl2_type_free(t);
+  }
+  {
+    char err[256] = "";
+    struct {
+      const char *name, *src;
+    } bad[] = {
+        {"json err empty",            ""         },
+        {"json err trailing",         "1 2"      },
+        {"json err bad tok",          "}"        },
+        {"json err unterminated str", "\"abc"    },
+        {"json err no colon",         "{\"k\" 1}"},
+        {"json err bad number",       "1.2.3"    },
+        {"json err bad literal",      "tru"      },
+        {"json err open array",       "[1,"      },
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+      err[0] = '\0';
+      hcl2_value *v = hcl2_parse_json(bad[i].src, strlen(bad[i].src), err, sizeof(err));
+      check(bad[i].name, v == NULL && err[0] != '\0');
+      hcl2_value_free(v);
+    }
   }
 
   /* M4 (partial): unknown values + propagation */
@@ -582,6 +663,15 @@ int main(void) {
     for (size_t i = 0; i < sizeof(docs) / sizeof(docs[0]); i++)
       alld = oom_scan_doc(docs[i]) && alld;
     check("oom scan: documents", alld);
+
+    const char *jsons[] = {
+        "{\"a\": 1, \"b\": [true, null, \"x\\u00e9\"], \"c\": {\"d\": -2.5e3}}",
+        "[1, 2, 3]",
+    };
+    bool allj = true;
+    for (size_t i = 0; i < sizeof(jsons) / sizeof(jsons[0]); i++)
+      allj = oom_scan_json(jsons[i]) && allj;
+    check("oom scan: json", allj);
 
     /* convert() OOM paths: build inputs with the budget off, then fail each
        allocation inside the conversion until it succeeds. */

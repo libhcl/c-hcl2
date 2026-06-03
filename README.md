@@ -53,6 +53,10 @@ string→bool, …) and `list`/`set`/`map`/`any` constraints (list/set normalise
 a homogeneous tuple, map to an object, set de-duplicates). The distinct cty
 collection kinds and unknown values are still future work (see ROADMAP.md).
 
+`hcl2_parse_json` reads a JSON document into the same value model (object→object,
+array→tuple, scalars map directly, `\uXXXX`→UTF-8) — the value layer of HCL's
+JSON profile; the schema-driven body profile is future work.
+
 The exact grammar that is parsed today — lexical tokens, EBNF productions (both
 expressions and bodies), the Pratt operator-precedence table, and the template
 rules — is documented in [GRAMMAR.md](GRAMMAR.md).

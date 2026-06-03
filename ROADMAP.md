@@ -62,9 +62,12 @@ this is built milestone by milestone.
   decoding**, after the source buffer is gone. *Not yet:* full ranges (spans,
   not just a start point) and collecting multiple errors per parse.
 
-## M5 — HCL JSON profile
+## M5 — HCL JSON profile (started)
 
-- parse the JSON representation of HCL bodies/expressions
+- 🟡 value layer done: `hcl2_parse_json` parses a JSON document into the value
+  model (object/array/string/number/bool/null, with `\uXXXX` -> UTF-8). *Not
+  yet:* the schema-driven body profile (attribute-vs-block resolution, JSON
+  strings decoded as HCL templates), which needs the decode-with-schema work.
 
 ## Cross-cutting
 

@@ -115,6 +115,9 @@ int main(int argc, char **argv) {
     hcl2_doc *d = hcl2_parse(buf, len, err, sizeof(err));
     hcl2_doc_free(d);
 
+    hcl2_value *jv = hcl2_parse_json(buf, len, err, sizeof(err));
+    hcl2_value_free(jv);
+
     free(buf);
   }
   fprintf(stderr, "fuzz: %ld iterations, seed end-state 0x%08x, no crash.\n", iters, S);
