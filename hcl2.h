@@ -8,12 +8,13 @@
  * c-hcl2 -- a from-scratch C implementation of HCL2, the heavyweight companion
  * to libhcl/c-hcl (which parses only the declarative subset).
  *
- * STATUS: milestones 1-3 done -- the HCL2 *expression* language + value model,
- * configuration *bodies* (attributes + labeled blocks) with lazy decoding
- * against a context, and the template & collection expressions (for, splat,
- * heredocs, %{} directives, variadic spread). Not yet spec-complete; see
- * ROADMAP.md (the JSON profile, the full cty type system with unknown values,
- * and source-range diagnostics are not done yet).
+ * STATUS: milestones 1-3 done, M4 in progress -- the HCL2 *expression*
+ * language + value model, configuration *bodies* with lazy decoding, the
+ * template & collection expressions (for, splat, heredocs, %{} directives,
+ * variadic spread), line/column diagnostics, type constraints + conversion
+ * (hcl2_type_* / hcl2_convert), and unknown values (hcl2_unknown). Not yet
+ * spec-complete; see ROADMAP.md (the JSON profile, the distinct cty collection
+ * kinds and type-tracked unknowns, and full source ranges are not done yet).
  *
  * Implemented now: numbers, booleans, null, quoted-string templates with
  * `${ expr }` interpolation, tuples `[...]`, objects `{ k = v, ... }`, unary
@@ -34,6 +35,8 @@ typedef enum {
   HCL2_STRING,
   HCL2_TUPLE,
   HCL2_OBJECT,
+  HCL2_UNKNOWN, /* cty-style unknown: a placeholder whose concrete value is not
+                 * yet known; operations on it propagate unknown */
 } hcl2_kind;
 
 typedef struct hcl2_value hcl2_value;
@@ -41,6 +44,7 @@ typedef struct hcl2_ctx hcl2_ctx;
 
 /* --- value constructors (caller owns the result; free with hcl2_value_free) --- */
 hcl2_value *hcl2_null(void);
+hcl2_value *hcl2_unknown(void); /* a cty-style unknown placeholder */
 hcl2_value *hcl2_bool(bool b);
 hcl2_value *hcl2_number(double n);
 hcl2_value *hcl2_string(const char *s);
@@ -52,6 +56,7 @@ void hcl2_value_free(hcl2_value *v);
 
 /* --- value inspectors --- */
 hcl2_kind hcl2_value_kind(const hcl2_value *v);
+bool hcl2_value_is_unknown(const hcl2_value *v);
 bool hcl2_value_as_bool(const hcl2_value *v, bool *out);
 bool hcl2_value_as_number(const hcl2_value *v, double *out);
 const char *hcl2_value_as_string(const hcl2_value *v);          /* NULL unless HCL2_STRING */

@@ -63,6 +63,15 @@ static hcl2_value *hcl2_convert_helper(const char *expr, hcl2_type *t) {
   return out;
 }
 
+/* True if `expr` evaluates to an unknown value against ctx. */
+static bool evunk(const char *expr, hcl2_ctx *ctx) {
+  char err[256] = "";
+  hcl2_value *v = hcl2_eval(expr, strlen(expr), ctx, err, sizeof(err));
+  bool r = (v != NULL && hcl2_value_is_unknown(v));
+  hcl2_value_free(v);
+  return r;
+}
+
 /* A caller-registered function, for hcl2_ctx_set_func coverage. */
 static hcl2_value *fn_inc(const hcl2_value *const *a, size_t n, char *err, size_t errsz) {
   (void)err;
@@ -237,6 +246,42 @@ int main(void) {
     check("diag deferred null", v == NULL);
     check("diag deferred pos line 3", strstr(err, "line 3, column 5") != NULL);
     hcl2_doc_free(d);
+  }
+
+  /* M4 (partial): unknown values + propagation */
+  {
+    hcl2_ctx *ctx = hcl2_ctx_new();
+    hcl2_ctx_set_var(ctx, "u", hcl2_unknown());
+    hcl2_ctx_set_var(ctx, "n", hcl2_number(3));
+    check("unknown is_unknown", evunk("u", ctx));
+    check("unknown not for known", !evunk("n", ctx));
+    check("unknown binary", evunk("u + 1", ctx));
+    check("unknown compare", evunk("u > 1", ctx));
+    check("unknown unary", evunk("-u", ctx));
+    check("unknown cond", evunk("u ? 1 : 2", ctx));
+    check("unknown attr", evunk("u.field", ctx));
+    check("unknown index", evunk("u[0]", ctx));
+    check("unknown call arg", evunk("length(u)", ctx));
+    check("unknown call mixed", evunk("max(u, 1)", ctx));
+    check("unknown for coll", evunk("[for x in u : x]", ctx));
+    check("unknown ==", evunk("u == u", ctx));
+    check("unknown template interp", evunk("\"v=${u}\"", ctx));
+    check("unknown template if", evunk("\"%{ if u }a%{ endif }\"", ctx));
+    check("unknown template for", evunk("\"%{ for x in u }a%{ endfor }\"", ctx));
+    /* a known tuple may hold unknown elements (cty: the tuple stays known) */
+    check("known tuple of unknowns", !evunk("[for x in [1, 2] : x + u]", ctx));
+    /* convert(unknown) -> unknown of any target type */
+    {
+      char err[256] = "";
+      hcl2_value *u = hcl2_unknown();
+      hcl2_value *out = hcl2_convert(u, hcl2_type_number(), err, sizeof(err));
+      check("unknown converts to unknown", out && hcl2_value_is_unknown(out));
+      hcl2_value_free(u);
+      hcl2_value_free(out);
+    }
+    /* known arithmetic with no unknown stays known and correct */
+    check("known stays known", isnum(ev("n + 1", ctx), 4));
+    hcl2_ctx_free(ctx);
   }
 
   /* M4 (partial): type constraints & conversion */

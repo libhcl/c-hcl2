@@ -23,6 +23,7 @@ static hcl2_value *vnew(hcl2_kind k) {
   return v;
 }
 hcl2_value *hcl2_null(void) { return vnew(HCL2_NULL); }
+hcl2_value *hcl2_unknown(void) { return vnew(HCL2_UNKNOWN); }
 hcl2_value *hcl2_bool(bool b) {
   hcl2_value *v = vnew(HCL2_BOOL);
   if (v)
@@ -97,6 +98,7 @@ bool hcl2_object_set(hcl2_value *o, const char *key, hcl2_value *val) {
 }
 
 hcl2_kind hcl2_value_kind(const hcl2_value *v) { return v->kind; }
+bool hcl2_value_is_unknown(const hcl2_value *v) { return v != NULL && v->kind == HCL2_UNKNOWN; }
 bool hcl2_value_as_bool(const hcl2_value *v, bool *out) {
   if (v == NULL || v->kind != HCL2_BOOL)
     return false;
@@ -141,6 +143,8 @@ hcl2_value *vclone(const hcl2_value *v) {
   switch (v->kind) {
   case HCL2_NULL:
     return hcl2_null();
+  case HCL2_UNKNOWN:
+    return hcl2_unknown();
   case HCL2_BOOL:
     return hcl2_bool(v->b);
   case HCL2_NUMBER:
@@ -181,6 +185,8 @@ bool vequal(const hcl2_value *a, const hcl2_value *b) {
   switch (a->kind) {
   case HCL2_NULL:
     return true;
+  case HCL2_UNKNOWN:
+    return true; /* two unknowns compare equal (e.g. for set de-duplication) */
   case HCL2_BOOL:
     return a->b == b->b;
   case HCL2_NUMBER:

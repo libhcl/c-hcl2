@@ -54,6 +54,7 @@ static void everr_at(char *err, size_t errsz, const char *m, int line, int col) 
 static void everr_node(char *err, size_t errsz, const char *m, const struct node *x) {
   everr_at(err, errsz, m, x ? x->line : 0, x ? x->col : 0);
 }
+static bool is_unknown(const hcl2_value *v) { return v != NULL && v->kind == HCL2_UNKNOWN; }
 
 /* Append a scalar value's textual form for template interpolation. */
 static bool val_to_text(const hcl2_value *v, struct sbuf *s, char *err, size_t errsz) {
@@ -89,6 +90,7 @@ struct trender {
   const char *p, *end;
   bool heredoc; /* keep backslashes literal */
   bool active;  /* emit + evaluate, or traverse structurally */
+  bool unknown; /* an interpolated/conditional unknown makes the whole result unknown */
   hcl2_ctx *ctx;
   char *err;
   size_t errsz;
@@ -150,31 +152,35 @@ static void handle_if(struct trender *t, struct sbuf *s) {
     t->fail = true;
     return;
   }
-  bool cond = false;
+  bool cond = false, cunk = false;
   if (t->active) {
     hcl2_value *c = hcl2_eval(t->p, (size_t)(close - t->p), t->ctx, t->err, t->errsz);
     if (c == NULL) {
       t->fail = true;
       return;
     }
-    if (c->kind != HCL2_BOOL) {
+    if (c->kind == HCL2_UNKNOWN) {
+      cunk = true; /* unknown condition: render no branch, result is unknown */
+      t->unknown = true;
+    } else if (c->kind != HCL2_BOOL) {
       everr(t->err, t->errsz, "%{ if } condition must be a boolean");
       hcl2_value_free(c);
       t->fail = true;
       return;
+    } else {
+      cond = c->b;
     }
-    cond = c->b;
     hcl2_value_free(c);
   }
   t->p = close + 1;
   bool save = t->active;
   enum dirstop stop;
-  t->active = save && cond;
+  t->active = save && cond && !cunk;
   trender(t, s, &stop);
   if (t->fail)
     return;
   if (stop == STOP_ELSE) {
-    t->active = save && !cond;
+    t->active = save && !cond && !cunk;
     trender(t, s, &stop);
     if (t->fail)
       return;
@@ -246,6 +252,20 @@ static void handle_for(struct trender *t, struct sbuf *s) {
     free(kvar);
     free(vvar);
     t->fail = true;
+    return;
+  }
+  if (is_unknown(coll)) { /* unknown collection: render nothing, result unknown */
+    hcl2_value_free(coll);
+    free(kvar);
+    free(vvar);
+    t->unknown = true;
+    t->active = false;
+    trender(t, s, &stop);
+    t->active = true;
+    if (!t->fail && stop != STOP_ENDFOR) {
+      everr(t->err, t->errsz, "%{ for } without matching %{ endfor }");
+      t->fail = true;
+    }
     return;
   }
   if (coll->kind != HCL2_TUPLE && coll->kind != HCL2_OBJECT) {
@@ -354,6 +374,12 @@ static void trender(struct trender *t, struct sbuf *s, enum dirstop *stop) {
           t->fail = true;
           return;
         }
+        if (iv->kind == HCL2_UNKNOWN) { /* unknown interpolation -> unknown result */
+          t->unknown = true;
+          hcl2_value_free(iv);
+          t->p = close + 1;
+          continue;
+        }
         bool ok = val_to_text(iv, s, t->err, t->errsz);
         hcl2_value_free(iv);
         if (!ok) {
@@ -424,6 +450,7 @@ static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, c
                       .end = raw + strlen(raw),
                       .heredoc = heredoc,
                       .active = true,
+                      .unknown = false,
                       .ctx = ctx,
                       .err = err,
                       .errsz = errsz,
@@ -439,6 +466,10 @@ static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, c
     free(s.p);
     return NULL;
   }
+  if (t.unknown) { /* an interpolated/conditional unknown makes the result unknown */
+    free(s.p);
+    return hcl2_unknown();
+  }
   hcl2_value *v = hcl2_string(s.p ? s.p : "");
   free(s.p);
   return v;
@@ -447,6 +478,10 @@ static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, c
 static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *err, size_t errsz,
                                int line, int col) {
   hcl2_value *res = NULL;
+  if (is_unknown(l) || is_unknown(r)) { /* unknown propagates through operators */
+    res = hcl2_unknown();
+    goto done;
+  }
   if (op == T_EQ || op == T_NE) {
     bool eq = vequal(l, r);
     res = hcl2_bool(op == T_EQ ? eq : !eq);
@@ -520,6 +555,10 @@ static hcl2_value *eval_for(const struct node *x, hcl2_ctx *ctx, char *err, size
   hcl2_value *coll = hcl2_eval_node(x->a, ctx, err, errsz);
   if (coll == NULL)
     return NULL;
+  if (is_unknown(coll)) { /* can't iterate an unknown collection */
+    hcl2_value_free(coll);
+    return hcl2_unknown();
+  }
   if (coll->kind != HCL2_TUPLE && coll->kind != HCL2_OBJECT) {
     everr(err, errsz, "for-expression requires a tuple or object");
     hcl2_value_free(coll);
@@ -651,6 +690,10 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     hcl2_value *o = hcl2_eval_node(x->a, ctx, err, errsz);
     if (o == NULL)
       return NULL;
+    if (is_unknown(o)) {
+      hcl2_value_free(o);
+      return hcl2_unknown();
+    }
     const hcl2_value *f = hcl2_value_get(o, x->str);
     if (f == NULL) {
       char m[160];
@@ -672,6 +715,11 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
       hcl2_value_free(base);
       return NULL;
     }
+    if (is_unknown(base) || is_unknown(idx)) {
+      hcl2_value_free(base);
+      hcl2_value_free(idx);
+      return hcl2_unknown();
+    }
     const hcl2_value *f = NULL;
     if (base->kind == HCL2_TUPLE && idx->kind == HCL2_NUMBER) {
       double d = idx->num;
@@ -691,6 +739,10 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     hcl2_value *e = hcl2_eval_node(x->a, ctx, err, errsz);
     if (e == NULL)
       return NULL;
+    if (is_unknown(e)) {
+      hcl2_value_free(e);
+      return hcl2_unknown();
+    }
     hcl2_value *res = NULL;
     if (x->op == T_MINUS && e->kind == HCL2_NUMBER)
       res = hcl2_number(-e->num);
@@ -716,6 +768,10 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     hcl2_value *c = hcl2_eval_node(x->a, ctx, err, errsz);
     if (c == NULL)
       return NULL;
+    if (is_unknown(c)) {
+      hcl2_value_free(c);
+      return hcl2_unknown();
+    }
     if (c->kind != HCL2_BOOL) {
       everr(err, errsz, "condition must be a boolean");
       hcl2_value_free(c);
@@ -775,8 +831,17 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
         break;
       }
     }
+    bool argunk = false;
+    if (ok)
+      for (size_t j = 0; j < x->n; j++)
+        if (is_unknown(args[j])) {
+          argunk = true;
+          break;
+        }
     hcl2_value *res = NULL;
-    if (ok && x->op == T_ELLIPSIS) {
+    if (ok && argunk) {
+      res = hcl2_unknown(); /* an unknown argument makes the call result unknown */
+    } else if (ok && x->op == T_ELLIPSIS) {
       /* spread: the final argument must be a tuple whose elements become the
          trailing arguments. f(a, xs...) => f(a, xs[0], xs[1], ...) */
       hcl2_value *last = args[x->n - 1];

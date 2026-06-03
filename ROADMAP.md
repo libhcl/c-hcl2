@@ -49,8 +49,12 @@ this is built milestone by milestone.
 - 🟡 the `cty` type system: **type constraints + conversion done**
   (`hcl2_type_*` + `hcl2_convert`: primitive coercions, and list/set/map/any as
   constraints — list/set normalise to a homogeneous tuple, map to an object,
-  set de-duplicates). *Not yet:* distinct list/set/map runtime kinds, the
-  tuple-vs-list distinction, and **unknown** values.
+  set de-duplicates). **Unknown values done** (`hcl2_unknown` / the
+  `HCL2_UNKNOWN` kind): operations propagate unknown through binary/unary/
+  conditional/index/attribute/call/for-expression and template interpolation +
+  `%{ if }`/`%{ for }` directives; convert(unknown) is unknown. *Not yet:*
+  distinct list/set/map runtime kinds, the tuple-vs-list distinction, and
+  type-tracked unknowns (the unknown here is fully dynamic).
 - ⬜ richer numbers (big.Float semantics) instead of `double`
 - 🟡 source-range diagnostics: both syntax (lex/parse) **and** semantic/eval
   errors now report `at line L, column C`. AST nodes carry the position

@@ -43,6 +43,10 @@ hcl2_value *port = hcl2_body_attr_value(root, "port", ctx, err, sizeof err);
 const hcl2_block *svc = hcl2_body_block_at(root, "service", 0);
 ```
 
+**Unknown values** (`hcl2_unknown`) model cty's plan-time placeholders: an
+operation touching an unknown (arithmetic, comparison, conditionals, traversal,
+calls, for-expressions, template interpolation/directives) propagates unknown.
+
 A small **type-constraint / conversion** layer (`hcl2_type_*` + `hcl2_convert`)
 coerces values toward a target type — primitive coercions (number↔string,
 string→bool, …) and `list`/`set`/`map`/`any` constraints (list/set normalise to

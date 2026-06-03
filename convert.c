@@ -71,6 +71,8 @@ hcl2_value *hcl2_convert(const hcl2_value *v, const hcl2_type *t, char *err, siz
     everr(err, errsz, "convert: null argument");
     return NULL;
   }
+  if (v->kind == HCL2_UNKNOWN) /* unknown converts to unknown of any type */
+    return hcl2_unknown();
   switch (t->kind) {
   case TY_ANY:
     return vclone(v);
