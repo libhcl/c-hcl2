@@ -79,3 +79,19 @@ this is built milestone by milestone.
   buffers so ASan catches over-reads). Clean over millions of iterations across
   several seeds.
 - ⬜ push line coverage further (the remaining ~10% are deep OOM/error edges)
+
+## HCL2 native-syntax compliance (tracking the gaps to 100%)
+
+The goal is full HCL2 native-syntax compatibility. Known remaining gaps, roughly
+by impact:
+
+- ✅ string escapes `\uNNNN` / `\UNNNNNNNN` (UTF-8) — done
+- ⬜ template whitespace trimming: `%{~ ... ~}` and `${~ ... ~}` strip adjacent run of whitespace
+- ⬜ legacy attribute-only splat `list.*.attr` (we have full splat `list[*]`)
+- ⬜ index/chained trailers after a splat (`xs[*][0]`, `xs[*].a[*]`)
+- ⬜ object-`for` grouping mode `{for ... : k => v...}`
+- ⬜ distinct cty collection kinds (list/set/map vs tuple/object) + the
+  tuple-vs-list distinction; type-tracked unknowns
+- ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double`)
+- ⬜ full source ranges (start+end spans) and multi-error reporting
+- ⬜ the JSON profile's schema-driven body layer

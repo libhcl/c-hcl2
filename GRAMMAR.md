@@ -230,7 +230,9 @@ during parsing:
 - `$${` — an escaped literal `${` (no interpolation).
 - `%{ ... }` — template **directives** are recognised and **rejected** with a
   clear "not supported yet" error (reserved for a later milestone).
-- Backslash escapes (`\n`, `\t`, `\r`, `\"`, `\\`, …) are expanded here.
+- Backslash escapes are expanded here: `\n` `\t` `\r` `\"` `\\`, and the
+  Unicode escapes `\uNNNN` (4 hex, BMP) and `\UNNNNNNNN` (8 hex, full range),
+  emitted as UTF-8. A truncated or non-hex unicode escape is an error.
 
 A plain string with no `${` is just its literal (escaped) text.
 

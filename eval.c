@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,38 @@ static void sb_putn(struct sbuf *s, const char *d, size_t n) {
 }
 static void sb_putc(struct sbuf *s, char c) { sb_putn(s, &c, 1); }
 static void sb_puts(struct sbuf *s, const char *str) { sb_putn(s, str, strlen(str)); }
+/* Append a Unicode code point as UTF-8 (used by \uNNNN / \UNNNNNNNN escapes). */
+static void sb_utf8(struct sbuf *s, uint32_t cp) {
+  char b[4];
+  if (cp < 0x80) {
+    b[0] = (char)cp;
+    sb_putn(s, b, 1);
+  } else if (cp < 0x800) {
+    b[0] = (char)(0xC0 | (cp >> 6));
+    b[1] = (char)(0x80 | (cp & 0x3F));
+    sb_putn(s, b, 2);
+  } else if (cp < 0x10000) {
+    b[0] = (char)(0xE0 | (cp >> 12));
+    b[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    b[2] = (char)(0x80 | (cp & 0x3F));
+    sb_putn(s, b, 3);
+  } else {
+    b[0] = (char)(0xF0 | (cp >> 18));
+    b[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    b[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    b[3] = (char)(0x80 | (cp & 0x3F));
+    sb_putn(s, b, 4);
+  }
+}
+static int hexval(char c) {
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
 
 void everr(char *err, size_t errsz, const char *m) {
   if (err && errsz && err[0] == '\0')
@@ -422,7 +455,30 @@ static void trender(struct trender *t, struct sbuf *s, enum dirstop *stop) {
       continue;
     }
     if (!t->heredoc && p[0] == '\\' && p + 1 < t->end) {
-      char e = p[1], ch = e;
+      char e = p[1];
+      if (e == 'u' || e == 'U') { /* \uNNNN (BMP) and \UNNNNNNNN (full) escapes */
+        int ndig = (e == 'u') ? 4 : 8;
+        if (t->end - (p + 2) < ndig) {
+          everr(t->err, t->errsz, "truncated unicode escape in string");
+          t->fail = true;
+          return;
+        }
+        uint32_t cp = 0;
+        for (int i = 0; i < ndig; i++) {
+          int h = hexval(p[2 + i]);
+          if (h < 0) {
+            everr(t->err, t->errsz, "invalid hex digit in unicode escape");
+            t->fail = true;
+            return;
+          }
+          cp = cp * 16 + (uint32_t)h;
+        }
+        if (t->active)
+          sb_utf8(s, cp);
+        t->p = p + 2 + ndig;
+        continue;
+      }
+      char ch = e;
       if (e == 'n')
         ch = '\n';
       else if (e == 't')

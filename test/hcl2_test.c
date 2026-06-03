@@ -153,6 +153,12 @@ int main(void) {
   check("interp number", isstr(ev("\"a${1 + 1}b\"", NULL), "a2b"));
   check("escaped dollar", isstr(ev("\"$${x}\"", NULL), "${x}"));
   check("escape n", isstr(ev("\"a\\nb\"", NULL), "a\nb"));
+  check("escape quote+bs", isstr(ev("\"q\\\"\\\\\"", NULL), "q\"\\"));
+  check("escape u BMP", isstr(ev("\"caf\\u00e9\"", NULL), "caf\xc3\xa9"));
+  check("escape u 3-byte", isstr(ev("\"\\u4e2d\"", NULL), "\xe4\xb8\xad"));
+  check("escape U 4-byte", isstr(ev("\"\\U0001F600\"", NULL), "\xf0\x9f\x98\x80"));
+  check("escape u bad hex", fails("\"\\uZZZZ\"", NULL));
+  check("escape u truncated", fails("\"\\u12\"", NULL));
   check("interp nested object", isstr(ev("\"v=${ {a = 1}.a }\"", NULL), "v=1"));
 
   /* tuples + objects + traversal on literals */
