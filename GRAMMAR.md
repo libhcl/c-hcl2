@@ -117,7 +117,9 @@ objitem     = ( IDENT | STRING ) ( "=" | ":" ) expr [ "," ] ;
 forintro    = "for" IDENT [ "," IDENT ] "in" expr ":" ;
               (* one var = value var; two vars = key/index var, then value var *)
 tuple-for   = "[" forintro expr [ "if" expr ] "]" ;
-object-for  = "{" forintro expr "=>" expr [ "if" expr ] "}" ;
+object-for  = "{" forintro expr "=>" expr [ "..." ] [ "if" expr ] "}" ;
+              (* a trailing "..." after the value is grouping mode: values that
+                 map to the same key are collected into a tuple *)
 ```
 
 ### Splat

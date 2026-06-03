@@ -733,7 +733,30 @@ static hcl2_value *eval_for(const struct node *x, hcl2_ctx *ctx, char *err, size
         break;
       }
       hcl2_value *vv = hcl2_eval_node(x->c, use, err, errsz);
-      if (vv == NULL || !hcl2_object_set(result, kk->str, vv)) {
+      if (vv == NULL) {
+        hcl2_value_free(kk);
+        ok = false;
+        break;
+      }
+      if (x->op == T_ELLIPSIS) { /* grouping: accumulate same-key values in a tuple */
+        hcl2_value *grp = (hcl2_value *)hcl2_value_get(result, kk->str);
+        if (grp == NULL) {
+          grp = hcl2_tuple();
+          if (grp == NULL || !hcl2_object_set(result, kk->str, grp)) {
+            hcl2_value_free(grp);
+            hcl2_value_free(kk);
+            hcl2_value_free(vv);
+            ok = false;
+            break;
+          }
+        }
+        if (!hcl2_tuple_push(grp, vv)) {
+          hcl2_value_free(kk);
+          hcl2_value_free(vv);
+          ok = false;
+          break;
+        }
+      } else if (!hcl2_object_set(result, kk->str, vv)) {
         hcl2_value_free(kk);
         hcl2_value_free(vv);
         ok = false;

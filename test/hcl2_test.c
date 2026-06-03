@@ -510,6 +510,11 @@ int main(void) {
   check("for object filter",
         isnum(ev("length({for k, v in {a=1,b=2,c=3} : k => v if v != 2})", NULL), 2));
   check("for nested", isnum(ev("[for xs in [[1,2],[3]] : length(xs)][0]", NULL), 2));
+  check("for object grouping",
+        isstr(ev("jsonencode({for s in [\"a\", \"b\", \"a\"] : s => s...})", NULL),
+              "{\"a\":[\"a\",\"a\"],\"b\":[\"b\"]}"));
+  check("for object group len",
+        isnum(ev("length({for s in [\"a\", \"b\", \"a\"] : s => s...}.a)", NULL), 2));
   {
     hcl2_ctx *ctx = hcl2_ctx_new();
     hcl2_value *people = hcl2_tuple();

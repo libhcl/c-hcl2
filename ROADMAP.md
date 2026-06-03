@@ -92,7 +92,8 @@ by impact:
 - ✅ a splat now captures the whole following relative traversal — `.attr` and
   `[index]` trailers (`xs[*].a[0]`) map per element, matching HCL. *Still
   unsupported:* chained splats (`xs[*][*]`, `.*.* `), rejected with a clear error
-- ⬜ object-`for` grouping mode `{for ... : k => v...}`
+- ✅ object-`for` grouping mode `{for ... : k => v...}` (same-key values collected
+  into a tuple) — done
 - ⬜ distinct cty collection kinds (list/set/map vs tuple/object) + the
   tuple-vs-list distinction; type-tracked unknowns
 - ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double`)

@@ -133,6 +133,10 @@ static struct node *parse_for(struct parser *p, bool object) {
       node_free(f);
       return NULL;
     }
+    if (l->tok == T_ELLIPSIS) { /* grouping mode: key -> tuple of values */
+      f->op = T_ELLIPSIS;
+      lex(l);
+    }
   }
   if (kw(l, "if")) { /* optional filter */
     lex(l);
