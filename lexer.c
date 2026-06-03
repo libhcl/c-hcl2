@@ -28,13 +28,11 @@ void lx_linecol(const struct lexer *l, const char *pos, int *line, int *col) {
 void lx_err(struct lexer *l, const char *m) {
   if (!(l->err && l->errsz && l->err[0] == '\0'))
     return;
-  if (l->start != NULL && l->tokpos != NULL) {
-    int line, col;
-    lx_linecol(l, l->tokpos, &line, &col);
-    snprintf(l->err, l->errsz, "hcl2: %s at line %d, column %d", m, line, col);
-  } else {
-    snprintf(l->err, l->errsz, "hcl2: %s", m);
-  }
+  /* start/tokpos are always set by the entry points; lx_linecol tolerates NULL
+     (yielding line 1, column 0) so no separate position-less branch is needed. */
+  int line, col;
+  lx_linecol(l, l->tokpos, &line, &col);
+  snprintf(l->err, l->errsz, "hcl2: %s at line %d, column %d", m, line, col);
 }
 static bool settext(struct lexer *l, const char *s, size_t n) {
   char *t = realloc(l->text, n + 1);

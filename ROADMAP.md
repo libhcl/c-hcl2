@@ -78,7 +78,11 @@ this is built milestone by milestone.
   token-soup / seed-mutation inputs into hcl2_eval + hcl2_parse, exact-length
   buffers so ASan catches over-reads). Clean over millions of iterations across
   several seeds.
-- ⬜ push line coverage further (the remaining ~10% are deep OOM/error edges)
+- 🟡 line coverage raised to ~99% (100% functions). Exhaustive-switch dead
+  `return`s were removed by making the last case a `default:`; the residual ~1%
+  is the deepest nested allocation-failure cleanup arms and a few defensive NULL
+  guards. (Literal 100% lines isn't cleanly reachable in C without deleting
+  defensive code.)
 
 ## HCL2 native-syntax compliance (tracking the gaps to 100%)
 

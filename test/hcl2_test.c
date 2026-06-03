@@ -51,6 +51,25 @@ static bool fails(const char *s, hcl2_ctx *ctx) {
   return err[0] != '\0';
 }
 
+static bool hcl2_parse_fails(const char *s) {
+  char err[256] = "";
+  hcl2_doc *d = hcl2_parse(s, strlen(s), err, sizeof(err));
+  if (d) {
+    hcl2_doc_free(d);
+    return false;
+  }
+  return err[0] != '\0';
+}
+static hcl2_value *hcl2_parse_json_helper(const char *s) {
+  return hcl2_parse_json(s, strlen(s), NULL, 0);
+}
+static bool hcl2_parse_json_ok(const char *s) {
+  hcl2_value *v = hcl2_parse_json(s, strlen(s), NULL, 0);
+  bool ok = (v != NULL);
+  hcl2_value_free(v);
+  return ok;
+}
+
 /* Evaluate an expression, convert the result to `t` (taking ownership of t,
  * which is a no-op to free for primitive singletons), free the source, and
  * return the converted value so the isnum/isstr/isbool helpers can consume it. */
@@ -355,6 +374,28 @@ int main(void) {
     /* 3-byte UTF-8 from a \u escape: U+4E2D */
     const char *s3 = "\"\\u4e2d\"";
     check("json u 3-byte", isstr(hcl2_parse_json(s3, strlen(s3), NULL, 0), "\xe4\xb8\xad"));
+    /* 2-byte \u (U+00E9) and the \/ \b \f escapes */
+    const char *s2 = "\"\\u00e9\\/\\b\\f\"";
+    check("json u 2-byte + esc", isstr(hcl2_parse_json(s2, strlen(s2), NULL, 0), "\xc3\xa9/\b\f"));
+    /* a bad escape and a bad \u are errors */
+    const char *sbe = "\"\\x\"";
+    check("json bad escape", hcl2_parse_json(sbe, strlen(sbe), NULL, 0) == NULL);
+    const char *sbu = "\"\\u00zz\"";
+    check("json bad \\u", hcl2_parse_json(sbu, strlen(sbu), NULL, 0) == NULL);
+  }
+  {
+    /* jsonencode covers every string-escape branch; a round-trip through
+       jsondecode verifies both serialiser and parser on the same bytes. */
+    hcl2_ctx *c = hcl2_ctx_new();
+    hcl2_ctx_set_var(c, "s", hcl2_string("q\"b\\c\nd\re\tf\bg\fh\x01i"));
+    check("jsonencode all escapes",
+          isstr(ev("jsonencode(s)", c), "\"q\\\"b\\\\c\\nd\\re\\tf\\bg\\fh\\u0001i\""));
+    hcl2_value *rt = ev("jsondecode(jsonencode(s))", c);
+    check("json escape round-trip",
+          rt && hcl2_value_as_string(rt) &&
+              strcmp(hcl2_value_as_string(rt), "q\"b\\c\nd\re\tf\bg\fh\x01i") == 0);
+    hcl2_value_free(rt);
+    hcl2_ctx_free(c);
   }
   {
     /* JSON parses into the value model, so the conversion layer applies */
@@ -486,6 +527,179 @@ int main(void) {
       hcl2_type_free(t);
     }
     check("conv null args", hcl2_convert(NULL, hcl2_type_any(), NULL, 0) == NULL);
+  }
+
+  /* ---- coverage: vequal across kinds (via == and set de-dup) ---- */
+  check("eq null", isbool(ev("null == null", NULL), true));
+  check("eq bool", isbool(ev("true == true", NULL), true));
+  check("eq tuple", isbool(ev("[1, 2] == [1, 2]", NULL), true));
+  check("eq tuple len", isbool(ev("[1] == [1, 2]", NULL), false));
+  check("eq tuple elem", isbool(ev("[1, 2] == [1, 9]", NULL), false));
+  check("eq object", isbool(ev("{a = 1, b = 2} == {a = 1, b = 2}", NULL), true));
+  check("eq object nf", isbool(ev("{a = 1} == {a = 1, b = 2}", NULL), false));
+  check("eq object key", isbool(ev("{a = 1} == {b = 1}", NULL), false));
+  check("eq kind mismatch", isbool(ev("1 == \"1\"", NULL), false));
+  {
+    /* set de-dup of two unknowns exercises vequal's UNKNOWN case */
+    char err[256] = "";
+    hcl2_value *src = hcl2_tuple();
+    hcl2_tuple_push(src, hcl2_unknown());
+    hcl2_tuple_push(src, hcl2_unknown());
+    hcl2_type *t = hcl2_type_set(hcl2_type_any());
+    hcl2_value *out = hcl2_convert(src, t, err, sizeof(err));
+    check("set dedup unknowns", out && hcl2_value_len(out) == 1);
+    hcl2_value_free(out);
+    hcl2_value_free(src);
+    hcl2_type_free(t);
+  }
+  check("object literal dup key", isnum(ev("{a = 1, a = 2}.a", NULL), 2));
+
+  /* ---- coverage: value-model inspector guards (public API) ---- */
+  {
+    hcl2_value *num = hcl2_number(5);
+    check("len of non-collection", hcl2_value_len(num) == 0);
+    check("at of non-tuple", hcl2_value_at(num, 0) == NULL);
+    check("get of non-object", hcl2_value_get(num, "x") == NULL);
+    check("push to non-tuple", !hcl2_tuple_push(num, hcl2_number(1)));
+    check("set on non-object", !hcl2_object_set(num, "k", hcl2_number(1)));
+    check("len NULL", hcl2_value_len(NULL) == 0);
+    bool b;
+    double d;
+    check("as_bool wrong kind", !hcl2_value_as_bool(num, &b));
+    check("as_number wrong kind",
+          !hcl2_value_as_number(hcl2_value_at(hcl2_value_at(num, 0), 0), &d));
+    hcl2_value *str = hcl2_string("x");
+    check("as_number on string", !hcl2_value_as_number(str, &d));
+    hcl2_value_free(str);
+    hcl2_value_free(num);
+  }
+  /* lexer / json reachable edges */
+  check("heredoc term trailing ws", isstr(ev("<<EOF\nx\nEOF  \n", NULL), "x\n"));
+  check("heredoc indent all-blank", isstr(ev("<<-EOF\n\nEOF\n", NULL), "\n"));
+  check("json uppercase \\u", isstr(hcl2_parse_json_helper("\"\\u00C9\""), "\xc3\x89"));
+  check("json bad exponent", !hcl2_parse_json_ok("12e"));
+
+  /* ---- coverage: a wrong-arg error for every builtin ---- */
+  check("err length arity", fails("length()", NULL));
+  check("err length type", fails("length(1)", NULL));
+  check("err upper type", fails("upper(1)", NULL));
+  check("err split type", fails("split(1, 2)", NULL));
+  check("err min type", fails("min(\"a\")", NULL));
+  check("err floor type", fails("floor(\"x\")", NULL));
+  check("err values type", fails("values([1])", NULL));
+  check("err contains type", fails("contains(1, 2)", NULL));
+  check("err lookup type", fails("lookup(1, \"a\", 0)", NULL));
+  check("err coalesce all null", fails("coalesce(null, null)", NULL));
+  check("err join type", fails("join(1, [])", NULL));
+  check("err jsondecode type", fails("jsondecode(1)", NULL));
+  check("err tostring arity", fails("tostring(1, 2)", NULL));
+
+  /* ---- coverage: operators, escapes, big output ---- */
+  check("op le", isbool(ev("1 <= 1", NULL), true));
+  check("op ge", isbool(ev("2 >= 3", NULL), false));
+  check("op binary minus", isnum(ev("5 - 2", NULL), 3));
+  check("op mod zero", fails("5 % 0", NULL));
+  check("op logical non-bool", fails("true && 1", NULL));
+  check("op unary minus type", fails("-true", NULL));
+  check("op unary not type", fails("!1", NULL));
+  check("op amp error", fails("1 & 2", NULL));
+  check("op pipe error", fails("1 | 2", NULL));
+  check("lex invalid char", fails("@", NULL));
+  check("tmpl bool interp", isstr(ev("\"v=${true}\"", NULL), "v=true"));
+  check("tmpl escape t r", isstr(ev("\"a\\tb\\rc\"", NULL), "a\tb\rc"));
+  /* long join output (builtins sbuf growth) and a long literal template
+     (evaluator sbuf growth) -- both exceed the 64-byte initial buffer */
+  check("join grows sbuf",
+        isnum(ev("length(join(\"\", [for x in [1,2,3,4,5,6,7,8,9,10] : \"0123456789\"]))", NULL),
+              100));
+  {
+    const char *lit = /* ~140 chars -> sb doubles twice */
+        "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"";
+    hcl2_value *v = ev(lit, NULL);
+    check("long literal grows sbuf",
+          v && hcl2_value_as_string(v) && strlen(hcl2_value_as_string(v)) == 138);
+    hcl2_value_free(v);
+  }
+  {
+    /* a single large put (one interpolation / one join element) forces the
+       `cap *= 2` doubling loop in both sbuf implementations */
+    char big[200];
+    memset(big, 'z', sizeof(big) - 1);
+    big[sizeof(big) - 1] = '\0';
+    hcl2_ctx *c = hcl2_ctx_new();
+    hcl2_ctx_set_var(c, "big", hcl2_string(big));
+    check("template big put", isnum(ev("length(\"<${big}>\")", c), 201));
+    check("join big put", isnum(ev("length(join(\",\", [big, big]))", c), 399));
+    hcl2_ctx_free(c);
+  }
+
+  /* for-expression / for-directive shadowing a bound context variable */
+  {
+    hcl2_ctx *c = hcl2_ctx_new();
+    hcl2_ctx_set_var(c, "x", hcl2_number(99));
+    check("for-expr shadows var", isnum(ev("[for x in [1, 2] : x][1]", c), 2));
+    check("var restored after for", isnum(ev("x", c), 99));
+    hcl2_ctx_set_var(c, "k", hcl2_string("outer"));
+    check("for-dir shadows var", isstr(ev("\"%{ for k in [1, 2] }${k}%{ endfor }\"", c), "12"));
+    check("var restored after dir", isstr(ev("k", c), "outer"));
+    hcl2_ctx_free(c);
+  }
+
+  /* ---- coverage: parser error branches ---- */
+  check("perr call no rparen", fails("length(1 2)", NULL));
+  check("perr paren empty", fails("()", NULL));
+  check("perr paren no close", fails("(1 2", NULL));
+  check("perr tuple no comma", fails("[1 2]", NULL));
+  check("perr object no eq", fails("{a 1}", NULL));
+  check("perr index no close", fails("[1][0", NULL));
+  check("perr splat no close", fails("[1][*x]", NULL));
+  check("perr splat idx no close", fails("[[1]][*][0", NULL));
+  check("perr cond no colon", fails("true ? 1", NULL));
+  check("perr cond no else", fails("true ? 1 :", NULL));
+  check("perr block no body", hcl2_parse_fails("svc \"a\""));
+  check("perr heredoc no close brace", fails("\"%{ if true }x%{ endif\"", NULL));
+  check("perr if unterminated", fails("\"%{ if true\"", NULL));
+  check("perr for unterminated", fails("\"%{ for x in [1]\"", NULL));
+  check("perr for no endfor", fails("\"%{ for x in [1] }y\"", NULL));
+
+  /* ---- coverage: JSON edge + error branches ---- */
+  check("json false literal", isbool(hcl2_parse_json_helper("false"), false));
+  check("json empty array", hcl2_parse_json_ok("[]"));
+  check("json empty object", hcl2_parse_json_ok("{}"));
+  check("json key not string", !hcl2_parse_json_ok("{1: 2}"));
+  check("json trailing backslash", !hcl2_parse_json_ok("\"a\\"));
+  check("json u truncated", !hcl2_parse_json_ok("\"\\u12\""));
+  check("json lone minus", !hcl2_parse_json_ok("-"));
+  check("json array no comma", !hcl2_parse_json_ok("[1 2]"));
+  check("json object no comma", !hcl2_parse_json_ok("{\"a\":1 \"b\":2}"));
+
+  /* ---- coverage: convert edges + errors ---- */
+  {
+    char err[256] = "";
+    hcl2_value *n = hcl2_number(5);
+    hcl2_value *o1 = hcl2_convert(n, hcl2_type_number(), err, sizeof(err)); /* number->number */
+    check("conv num id", o1 && hcl2_value_kind(o1) == HCL2_NUMBER);
+    hcl2_value_free(o1);
+    hcl2_value_free(n);
+    hcl2_value *tup = ev("[1, 2]", NULL);
+    hcl2_type *st = hcl2_type_string();
+    check("conv tuple to string err", hcl2_convert(tup, st, err, sizeof(err)) == NULL);
+    hcl2_type *mt = hcl2_type_map(hcl2_type_number());
+    check("conv tuple to map err", hcl2_convert(tup, mt, err, sizeof(err)) == NULL);
+    hcl2_value_free(tup);
+    hcl2_type_free(mt);
+  }
+
+  /* ---- coverage: misc builtin/value guards ---- */
+  check("jsonencode arity 0", fails("jsonencode()", NULL));
+  check("jsonencode arity 2", fails("jsonencode(1, 2)", NULL));
+  {
+    hcl2_value *t = hcl2_tuple();
+    check("push NULL elem", !hcl2_tuple_push(t, NULL));
+    hcl2_value_free(t);
+    check("has_attr NULL body", !hcl2_body_has_attr(NULL, "x"));
+    check("block_count NULL", hcl2_body_block_count(NULL, NULL) == 0);
   }
 
   /* misc public API surface */
@@ -734,6 +948,49 @@ int main(void) {
         "\"%{ for n in [1, 2, 3] }${n},%{ endfor }\"",
         "<<EOF\nhi ${1 + 1}\nEOF\n",
         "<<-EOF\n  a\n    b\n  EOF\n",
+        /* every builtin (drives each one's allocation/OOM arms) */
+        "length(\"abc\")",
+        "upper(\"a\")",
+        "lower(\"A\")",
+        "join(\",\", [\"a\", \"b\"])",
+        "split(\",\", \"a,b,c\")",
+        "split(\"\", \"hi\")",
+        "abs(-2)",
+        "floor(1.5)",
+        "ceil(1.5)",
+        "min(3, 1)",
+        "max(3, 1)",
+        "concat([1], [2], [3])",
+        "keys({a = 1, b = 2})",
+        "values({a = 1, b = 2})",
+        "contains([1, 2], 2)",
+        "lookup({a = 1}, \"a\", 0)",
+        "coalesce(null, 5)",
+        "tostring(42)",
+        "tonumber(\"3.5\")",
+        "tobool(\"true\")",
+        "jsonencode({a = [1, true, \"x\\ny\"], b = null, c = -2.5})",
+        "jsonencode(\"q\\\"\\\\\\u0001\")",
+        "jsondecode(\"{\\\"k\\\": [1, 2, \\\"s\\\"]}\")",
+        /* special forms, collection/template expressions */
+        "try(nope, alsono, \"fb\")",
+        "can(1 + 1)",
+        "{for k, v in {a = 1, b = 2} : k => v if v > 0}",
+        "[for x in [1, 2, 3] : x * 2 if x > 1]",
+        "{for s in [\"a\", \"b\", \"a\"] : s => s...}",
+        "[{a = [1, 2]}, {a = [3]}][*].a[0]",
+        "{a = 1, b = {c = [2, 3]}}",
+        "\"%{ for k, v in {a = 1} }${k}=${v} %{ endfor }\"",
+        /* more node kinds, to drive their construction/OOM arms */
+        "-5 + 2",
+        "!false",
+        "(1 + 2) * 3",
+        "1 <= 2 && 3 >= 2",
+        "true ? \"yes\" : \"no\"",
+        "[{a = 1}].*.a",
+        "[[1, 2], [3]][*][0]",
+        "{a = 1}[\"a\"]",
+        "<<-EOT\n  ${1 + 1}\n  line\n  EOT\n",
     };
     bool all = true;
     for (size_t i = 0; i < sizeof(exprs) / sizeof(exprs[0]); i++)
@@ -763,18 +1020,29 @@ int main(void) {
        allocation inside the conversion until it succeeds. */
     hcl2_value *lsrc = ev("[1, \"2\", 3]", NULL);
     hcl2_value *msrc = ev("{a = \"1\", b = 2}", NULL);
+    hcl2_value *nsrc = ev("42", NULL);
+    hcl2_value *bsrc = ev("\"true\"", NULL);
     hcl2_type *lt = hcl2_type_set(hcl2_type_number());
     hcl2_type *mt = hcl2_type_map(hcl2_type_string());
+    hcl2_type *st = hcl2_type_string(); /* singleton */
+    hcl2_type *bt = hcl2_type_bool();   /* singleton */
+    hcl2_type *at = hcl2_type_list(hcl2_type_any());
     bool cok = false;
     for (int b = 0; b <= 5000; b++) {
       hcl2_alloc_budget = b;
       char e[64] = "";
       hcl2_value *o1 = hcl2_convert(lsrc, lt, e, sizeof(e));
       hcl2_value *o2 = hcl2_convert(msrc, mt, e, sizeof(e));
+      hcl2_value *o3 = hcl2_convert(nsrc, st, e, sizeof(e));
+      hcl2_value *o4 = hcl2_convert(bsrc, bt, e, sizeof(e));
+      hcl2_value *o5 = hcl2_convert(lsrc, at, e, sizeof(e));
       hcl2_alloc_budget = -1;
-      bool done = (o1 != NULL && o2 != NULL);
+      bool done = o1 && o2 && o3 && o4 && o5;
       hcl2_value_free(o1);
       hcl2_value_free(o2);
+      hcl2_value_free(o3);
+      hcl2_value_free(o4);
+      hcl2_value_free(o5);
       if (done) {
         cok = true;
         break;
@@ -783,8 +1051,34 @@ int main(void) {
     check("oom scan: convert", cok);
     hcl2_value_free(lsrc);
     hcl2_value_free(msrc);
+    hcl2_value_free(nsrc);
+    hcl2_value_free(bsrc);
     hcl2_type_free(lt);
     hcl2_type_free(mt);
+    hcl2_type_free(at);
+
+    /* ctx_set_var / ctx_set_func OOM (realloc + strdup-name arms) */
+    bool ctxok = false;
+    for (int b = 0; b <= 200; b++) {
+      hcl2_alloc_budget = b;
+      hcl2_ctx *cc = hcl2_ctx_new();
+      bool done = false;
+      if (cc != NULL) {
+        hcl2_value *nv = hcl2_number(1);
+        bool r1 = (nv != NULL) && hcl2_ctx_set_var(cc, "x", nv);
+        if (!r1)
+          hcl2_value_free(nv);
+        bool r2 = hcl2_ctx_set_func(cc, "f", fn_inc);
+        done = r1 && r2;
+        hcl2_ctx_free(cc);
+      }
+      hcl2_alloc_budget = -1;
+      if (done) {
+        ctxok = true;
+        break;
+      }
+    }
+    check("oom scan: ctx", ctxok);
   }
 #endif
 

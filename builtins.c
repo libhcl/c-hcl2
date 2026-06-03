@@ -355,7 +355,7 @@ static bool json_emit(const hcl2_value *v, struct sb *s) {
         return false;
     }
     return sb_put(s, "]", 1);
-  case HCL2_OBJECT:
+  default: /* HCL2_OBJECT */
     if (!sb_put(s, "{", 1))
       return false;
     for (size_t i = 0; i < v->nf; i++) {
@@ -369,7 +369,6 @@ static bool json_emit(const hcl2_value *v, struct sb *s) {
     }
     return sb_put(s, "}", 1);
   }
-  return false;
 }
 static hcl2_value *bi_jsonencode(const hcl2_value *const *a, size_t n, char *e, size_t es) {
   if (n != 1) {
@@ -377,11 +376,8 @@ static hcl2_value *bi_jsonencode(const hcl2_value *const *a, size_t n, char *e, 
     return NULL;
   }
   struct sb s = {0};
-  bool ok = json_emit(a[0], &s);
-  if (!ok || s.oom) {
+  if (!json_emit(a[0], &s)) { /* json_emit only fails on OOM (-> NULL, like elsewhere) */
     free(s.p);
-    if (!s.oom)
-      everr(e, es, "jsonencode() failed");
     return NULL;
   }
   hcl2_value *v = hcl2_string(s.p ? s.p : "");

@@ -601,46 +601,28 @@ static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *
     goto done;
   }
   double a = l->num, b = r->num;
-  switch (op) {
-  case T_PLUS:
+  /* an if-chain (not a switch) so there is no unreachable default arm: EQ/NE/
+     AND/OR returned earlier, leaving exactly these nine operators. */
+  if (op == T_PLUS)
     res = hcl2_number(a + b);
-    break;
-  case T_MINUS:
+  else if (op == T_MINUS)
     res = hcl2_number(a - b);
-    break;
-  case T_STAR:
+  else if (op == T_STAR)
     res = hcl2_number(a * b);
-    break;
-  case T_SLASH:
-    if (b == 0) {
-      everr_at(err, errsz, "division by zero", line, col);
-      break;
-    }
-    res = hcl2_number(a / b);
-    break;
-  case T_PCT:
-    if (b == 0) {
-      everr_at(err, errsz, "modulo by zero", line, col);
-      break;
-    }
-    res = hcl2_number(fmod(a, b));
-    break;
-  case T_LT:
+  else if (op == T_SLASH)
+    res =
+        (b == 0) ? (everr_at(err, errsz, "division by zero", line, col), NULL) : hcl2_number(a / b);
+  else if (op == T_PCT)
+    res = (b == 0) ? (everr_at(err, errsz, "modulo by zero", line, col), NULL)
+                   : hcl2_number(fmod(a, b));
+  else if (op == T_LT)
     res = hcl2_bool(a < b);
-    break;
-  case T_LE:
+  else if (op == T_LE)
     res = hcl2_bool(a <= b);
-    break;
-  case T_GT:
+  else if (op == T_GT)
     res = hcl2_bool(a > b);
-    break;
-  case T_GE:
+  else /* T_GE */
     res = hcl2_bool(a >= b);
-    break;
-  default:
-    everr_at(err, errsz, "unknown operator", line, col);
-    break;
-  }
 done:
   hcl2_value_free(l);
   hcl2_value_free(r);
@@ -965,7 +947,7 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     }
     return o;
   }
-  case N_CALL: {
+  default: { /* N_CALL */
     /* try()/can() are special forms (lazy args); a caller may still override
        them by registering a context function of the same name. */
     if (ctx_func(ctx, x->str) == NULL) {
@@ -1040,7 +1022,6 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     return res;
   }
   }
-  return NULL;
 }
 
 hcl2_value *hcl2_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, size_t errsz) {

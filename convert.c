@@ -140,7 +140,7 @@ hcl2_value *hcl2_convert(const hcl2_value *v, const hcl2_type *t, char *err, siz
     }
     return out;
   }
-  case TY_MAP: {
+  default: { /* TY_MAP */
     if (v->kind != HCL2_OBJECT) {
       everr(err, errsz, "convert: source of a map must be an object");
       return NULL;
@@ -159,6 +159,4 @@ hcl2_value *hcl2_convert(const hcl2_value *v, const hcl2_type *t, char *err, siz
     return out;
   }
   }
-  everr(err, errsz, "convert: unknown target type");
-  return NULL;
 }

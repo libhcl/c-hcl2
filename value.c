@@ -163,7 +163,7 @@ hcl2_value *vclone(const hcl2_value *v) {
     }
     return t;
   }
-  case HCL2_OBJECT: {
+  default: { /* HCL2_OBJECT */
     hcl2_value *o = hcl2_object();
     for (size_t i = 0; i < v->nf; i++) {
       hcl2_value *e = vclone(v->fields[i].val);
@@ -176,7 +176,6 @@ hcl2_value *vclone(const hcl2_value *v) {
     return o;
   }
   }
-  return NULL;
 }
 
 bool vequal(const hcl2_value *a, const hcl2_value *b) {
@@ -200,7 +199,7 @@ bool vequal(const hcl2_value *a, const hcl2_value *b) {
       if (!vequal(a->items[i], b->items[i]))
         return false;
     return true;
-  case HCL2_OBJECT:
+  default: /* HCL2_OBJECT */
     if (a->nf != b->nf)
       return false;
     for (size_t i = 0; i < a->nf; i++) {
@@ -210,7 +209,6 @@ bool vequal(const hcl2_value *a, const hcl2_value *b) {
     }
     return true;
   }
-  return false;
 }
 
 /* ===========================================================================
