@@ -578,6 +578,14 @@ int main(void) {
       "dir nested for+if",
       isstr(ev("\"%{ for n in [1,2,3] }%{ if n == 2 }<${n}>%{ endif }%{ endfor }\"", NULL), "<2>"));
   check("dir escaped pct", isstr(ev("\"%%{x}\"", NULL), "%{x}"));
+  /* whitespace strip markers ${~ ~} / %{~ ~} */
+  check("ws strip left", isstr(ev("\"a  ${~ 1 }b\"", NULL), "a1b"));
+  check("ws strip right", isstr(ev("\"a${ 1 ~}  b\"", NULL), "a1b"));
+  check("ws strip both", isstr(ev("\"x${~ 1 ~}y\"", NULL), "x1y"));
+  check("ws strip directive", isstr(ev("\"  %{~ if true ~}X%{~ endif ~}  \"", NULL), "X"));
+  /* heredoc for-loop with `~}` trimming real newlines -> "123" */
+  check("ws strip heredoc for",
+        isstr(ev("<<EOT\n%{ for n in [1,2,3] ~}\n${n}%{ endfor ~}\nEOT\n", NULL), "123"));
   check("dir for scope clean", fails("\"%{ for z in [1] }${z}%{ endfor }${z}\"", NULL));
   check("dir err missing endif", fails("\"%{ if true }x\"", NULL));
   check("dir err stray endif", fails("\"x%{ endif }\"", NULL));

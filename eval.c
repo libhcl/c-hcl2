@@ -70,6 +70,13 @@ static int hexval(char c) {
     return c - 'A' + 10;
   return -1;
 }
+/* Strip the trailing run of whitespace already emitted (for `${~`/`%{~`). */
+static void sb_rtrim(struct sbuf *s) {
+  while (s->len > 0 && isspace((unsigned char)s->p[s->len - 1]))
+    s->len--;
+  if (s->p != NULL)
+    s->p[s->len] = '\0';
+}
 
 void everr(char *err, size_t errsz, const char *m) {
   if (err && errsz && err[0] == '\0')
@@ -144,7 +151,14 @@ static const char *brace_match(const char *s0, const char *end) {
   return NULL;
 }
 
-/* Advance past the next '}' (closing a directive's `%{ ... }`). */
+/* Skip the input whitespace run (for the `~}` strip marker). */
+static void t_rtrim(struct trender *t) {
+  while (t->p < t->end && isspace((unsigned char)*t->p))
+    t->p++;
+}
+
+/* Advance past the next '}' (closing a directive's `%{ ... }`), honouring a
+ * trailing `~` (strip following whitespace). */
 static void skip_to_brace(struct trender *t) {
   const char *close = brace_match(t->p, t->end);
   if (close == NULL) {
@@ -152,7 +166,10 @@ static void skip_to_brace(struct trender *t) {
     t->fail = true;
     return;
   }
+  bool rt = (close > t->p && close[-1] == '~');
   t->p = close + 1;
+  if (rt)
+    t_rtrim(t);
 }
 
 /* Read an identifier (skipping leading spaces); returns a malloc'd copy or NULL. */
@@ -185,9 +202,13 @@ static void handle_if(struct trender *t, struct sbuf *s) {
     t->fail = true;
     return;
   }
+  const char *cend = close;
+  bool rt = (cend > t->p && cend[-1] == '~'); /* `~}` strips following whitespace */
+  if (rt)
+    cend--;
   bool cond = false, cunk = false;
   if (t->active) {
-    hcl2_value *c = hcl2_eval(t->p, (size_t)(close - t->p), t->ctx, t->err, t->errsz);
+    hcl2_value *c = hcl2_eval(t->p, (size_t)(cend - t->p), t->ctx, t->err, t->errsz);
     if (c == NULL) {
       t->fail = true;
       return;
@@ -206,6 +227,8 @@ static void handle_if(struct trender *t, struct sbuf *s) {
     hcl2_value_free(c);
   }
   t->p = close + 1;
+  if (rt)
+    t_rtrim(t);
   bool save = t->active;
   enum dirstop stop;
   t->active = save && cond && !cunk;
@@ -263,9 +286,15 @@ static void handle_for(struct trender *t, struct sbuf *s) {
     t->fail = true;
     return;
   }
+  const char *eend = close;
+  bool rt = (eend > t->p && eend[-1] == '~'); /* `~}` strips following whitespace */
+  if (rt)
+    eend--;
   const char *exprS = t->p;
-  size_t exprN = (size_t)(close - t->p);
+  size_t exprN = (size_t)(eend - t->p);
   t->p = close + 1;
+  if (rt)
+    t_rtrim(t);
   const char *bodyStart = t->p;
   enum dirstop stop = STOP_ENDFOR;
 
@@ -401,8 +430,17 @@ static void trender(struct trender *t, struct sbuf *s, enum dirstop *stop) {
         t->fail = true;
         return;
       }
+      const char *cs = p + 2, *ce = close;
+      if (cs < ce && *cs == '~') { /* `${~` strips preceding whitespace */
+        if (t->active)
+          sb_rtrim(s);
+        cs++;
+      }
+      bool rt = (ce > cs && ce[-1] == '~'); /* `~}` strips following whitespace */
+      if (rt)
+        ce--;
       if (t->active) {
-        hcl2_value *iv = hcl2_eval(p + 2, (size_t)(close - (p + 2)), t->ctx, t->err, t->errsz);
+        hcl2_value *iv = hcl2_eval(cs, (size_t)(ce - cs), t->ctx, t->err, t->errsz);
         if (iv == NULL) {
           t->fail = true;
           return;
@@ -410,21 +448,27 @@ static void trender(struct trender *t, struct sbuf *s, enum dirstop *stop) {
         if (iv->kind == HCL2_UNKNOWN) { /* unknown interpolation -> unknown result */
           t->unknown = true;
           hcl2_value_free(iv);
-          t->p = close + 1;
-          continue;
-        }
-        bool ok = val_to_text(iv, s, t->err, t->errsz);
-        hcl2_value_free(iv);
-        if (!ok) {
-          t->fail = true;
-          return;
+        } else {
+          bool ok = val_to_text(iv, s, t->err, t->errsz);
+          hcl2_value_free(iv);
+          if (!ok) {
+            t->fail = true;
+            return;
+          }
         }
       }
       t->p = close + 1;
+      if (rt)
+        t_rtrim(t);
       continue;
     }
     if (p[0] == '%' && p + 1 < t->end && p[1] == '{') {
       t->p += 2;
+      if (t->p < t->end && *t->p == '~') { /* `%{~` strips preceding whitespace */
+        if (t->active)
+          sb_rtrim(s);
+        t->p++;
+      }
       while (t->p < t->end && isspace((unsigned char)*t->p))
         t->p++;
       const char *ks = t->p;

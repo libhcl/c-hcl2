@@ -86,7 +86,8 @@ The goal is full HCL2 native-syntax compatibility. Known remaining gaps, roughly
 by impact:
 
 - ✅ string escapes `\uNNNN` / `\UNNNNNNNN` (UTF-8) — done
-- ⬜ template whitespace trimming: `%{~ ... ~}` and `${~ ... ~}` strip adjacent run of whitespace
+- ✅ template whitespace trimming `${~ ~}` / `%{~ ~}` (strip the adjacent run of
+  whitespace, on interpolations and all directives) — done
 - ⬜ legacy attribute-only splat `list.*.attr` (we have full splat `list[*]`)
 - ⬜ index/chained trailers after a splat (`xs[*][0]`, `xs[*].a[*]`)
 - ⬜ object-`for` grouping mode `{for ... : k => v...}`

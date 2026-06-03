@@ -253,6 +253,11 @@ works inside their bodies. The body of an inactive branch (a false `if`, an
 empty `for`) is traversed structurally but not evaluated or emitted. Loop
 variables are scoped to the `for` body and restored afterwards.
 
+A `~` immediately inside a marker strips the adjacent run of whitespace:
+`${~ expr }` / `%{~ ... }` strip the whitespace *before* the marker (in the
+output), and `${ expr ~}` / `%{ ... ~}` strip the whitespace *after* the marker
+(in the source). Both ends may be marked.
+
 ### Heredocs (M3)
 
 A heredoc introduces a multi-line template:
