@@ -179,6 +179,11 @@ int main(void) {
   check("escape u bad hex", fails("\"\\uZZZZ\"", NULL));
   check("escape u truncated", fails("\"\\u12\"", NULL));
   check("interp nested object", isstr(ev("\"v=${ {a = 1}.a }\"", NULL), "v=1"));
+  check("interp nested string", isstr(ev("\"${ upper(\"hi\") }\"", NULL), "HI"));
+  check("interp nested string args",
+        isstr(ev("\"a${ join(\",\", [\"x\", \"y\"]) }b\"", NULL), "ax,yb"));
+  check("interp ternary strings", isstr(ev("\"${ true ? \"yes\" : \"no\" }\"", NULL), "yes"));
+  check("interp unterminated nested", fails("\"x${ \"y", NULL));
 
   /* tuples + objects + traversal on literals */
   {

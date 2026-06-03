@@ -98,6 +98,8 @@ by impact:
   unsupported:* chained splats (`xs[*][*]`, `.*.* `), rejected with a clear error
 - ✅ object-`for` grouping mode `{for ... : k => v...}` (same-key values collected
   into a tuple) — done
+- ✅ nested strings inside interpolation (`"${ f("x") }"`) — the string lexer is
+  interpolation-aware (tracks `${ }`/`%{ }` depth and nested quotes)
 - ⬜ distinct cty collection kinds (list/set/map vs tuple/object) + the
   tuple-vs-list distinction; type-tracked unknowns
 - ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double`)

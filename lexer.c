@@ -317,11 +317,47 @@ void lex(struct lexer *l) {
     return;
   }
   if (c == '"') {
-    /* capture raw inner bytes (escapes kept raw), stop at unescaped quote */
+    /* Capture raw inner bytes (escapes kept raw) up to the closing quote. The
+       scan is interpolation-aware: a `"` only ends the string when we are not
+       inside a `${ }` / `%{ }` template, so nested strings like `"${f("x")}"`
+       are handled (the inner template is re-parsed later by eval_template). */
     const char *start = ++l->p;
-    while (l->p < l->end && *l->p != '"') {
-      if (*l->p == '\\' && l->p + 1 < l->end)
+    int depth = 0;       /* open ${ }/%{ } (and nested braces) within the string */
+    bool in_str = false; /* inside a nested "..." within an interpolation */
+    while (l->p < l->end) {
+      char d = *l->p;
+      if (d == '\\' && l->p + 1 < l->end) {
+        l->p += 2;
+        continue;
+      }
+      if (in_str) {
+        if (d == '"')
+          in_str = false;
         l->p++;
+        continue;
+      }
+      if (depth == 0) {
+        if (d == '"')
+          break; /* closing quote of the outer string */
+        if ((d == '$' || d == '%') && l->p + 1 < l->end && l->p[1] == '{') {
+          depth = 1;
+          l->p += 2;
+          continue;
+        }
+        l->p++;
+        continue;
+      }
+      /* depth > 0: inside an interpolation */
+      if (d == '"') {
+        in_str = true;
+      } else if ((d == '$' || d == '%') && l->p + 1 < l->end && l->p[1] == '{') {
+        depth++;
+        l->p++;
+      } else if (d == '{') {
+        depth++;
+      } else if (d == '}') {
+        depth--;
+      }
       l->p++;
     }
     if (l->p >= l->end) {

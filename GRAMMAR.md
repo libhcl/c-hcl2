@@ -30,10 +30,12 @@ NUMBER  = DIGIT { DIGIT | "." | "e" | "E" | exp-sign } ;
              the value is parsed with strtod(), so "1", "1.5", "1e9",
              "2.5E-3" are all accepted *)
 
-STRING  = '"' { rawchar | "\" anychar } '"' ;
-          (* the lexer captures the RAW inner bytes (escapes kept verbatim)
-             and stops at the first unescaped '"'. Escape processing and
-             ${ } interpolation happen later, at evaluation — see §4. *)
+STRING  = '"' { rawchar | "\" anychar | "${" template "}" } '"' ;
+          (* the lexer captures the RAW inner bytes (escapes kept verbatim).
+             The scan is interpolation-aware: a '"' only closes the string when
+             not inside a ${ } / %{ } template, so nested strings such as
+             `"${ upper("hi") }"` work. Escape processing and ${ } evaluation
+             happen later — see §4. *)
 
 IDENT   = ID_START { ID_CHAR } ;
 ID_START = ALPHA | "_" ;
