@@ -107,11 +107,11 @@ hcl2_value *hcl2_convert(const hcl2_value *v, const hcl2_type *t, char *err, siz
     return NULL;
   case TY_LIST:
   case TY_SET: {
-    if (v->kind != HCL2_TUPLE) {
-      everr(err, errsz, "convert: source of a list/set must be a tuple");
+    if (!hcl2_is_seq(v->kind)) {
+      everr(err, errsz, "convert: source of a list/set must be a tuple, list or set");
       return NULL;
     }
-    hcl2_value *out = hcl2_tuple();
+    hcl2_value *out = (t->kind == TY_SET) ? hcl2_set() : hcl2_list();
     if (out == NULL)
       return NULL;
     for (size_t i = 0; i < v->n; i++) {
@@ -141,11 +141,11 @@ hcl2_value *hcl2_convert(const hcl2_value *v, const hcl2_type *t, char *err, siz
     return out;
   }
   default: { /* TY_MAP */
-    if (v->kind != HCL2_OBJECT) {
-      everr(err, errsz, "convert: source of a map must be an object");
+    if (!hcl2_is_keyed(v->kind)) {
+      everr(err, errsz, "convert: source of a map must be an object or map");
       return NULL;
     }
-    hcl2_value *out = hcl2_object();
+    hcl2_value *out = hcl2_map();
     if (out == NULL)
       return NULL;
     for (size_t i = 0; i < v->nf; i++) {

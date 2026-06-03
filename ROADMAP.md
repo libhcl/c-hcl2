@@ -47,14 +47,15 @@ this is built milestone by milestone.
 ## M4 — type system & diagnostics (started)
 
 - 🟡 the `cty` type system: **type constraints + conversion done**
-  (`hcl2_type_*` + `hcl2_convert`: primitive coercions, and list/set/map/any as
-  constraints — list/set normalise to a homogeneous tuple, map to an object,
-  set de-duplicates). **Unknown values done** (`hcl2_unknown` / the
-  `HCL2_UNKNOWN` kind): operations propagate unknown through binary/unary/
-  conditional/index/attribute/call/for-expression and template interpolation +
-  `%{ if }`/`%{ for }` directives; convert(unknown) is unknown. *Not yet:*
-  distinct list/set/map runtime kinds, the tuple-vs-list distinction, and
-  type-tracked unknowns (the unknown here is fully dynamic).
+  (`hcl2_type_*` + `hcl2_convert`). **Distinct collection kinds done**:
+  `HCL2_LIST` / `HCL2_SET` / `HCL2_MAP` are real value kinds (a list/set is not
+  equal to a tuple, a map is not an object). `hcl2_convert` to list/set/map
+  produces them; they flow through indexing, `length`, `for`-expressions,
+  `jsonencode`, etc. (list/set share tuple storage, map shares object storage).
+  **Unknown values done** (`hcl2_unknown` / `HCL2_UNKNOWN`): operations
+  propagate unknown through binary/unary/conditional/index/attribute/call/
+  for-expression and template interpolation + directives; convert(unknown) is
+  unknown. *Not yet:* type-tracked unknowns (the unknown here is fully dynamic).
 - ⬜ richer numbers (big.Float semantics) instead of `double`
 - 🟡 source-range diagnostics: both syntax (lex/parse) **and** semantic/eval
   errors now report `at line L, column C`. AST nodes carry the position
@@ -100,8 +101,8 @@ by impact:
   into a tuple) — done
 - ✅ nested strings inside interpolation (`"${ f("x") }"`) — the string lexer is
   interpolation-aware (tracks `${ }`/`%{ }` depth and nested quotes)
-- ⬜ distinct cty collection kinds (list/set/map vs tuple/object) + the
-  tuple-vs-list distinction; type-tracked unknowns
+- ✅ distinct cty collection kinds (list/set/map vs tuple/object) + the
+  tuple-vs-list distinction — done. *Still:* type-tracked unknowns
 - ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double`)
 - ⬜ full source ranges (start+end spans) and multi-error reporting
 - ⬜ the JSON profile's schema-driven body layer

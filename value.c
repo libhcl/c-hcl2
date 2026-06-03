@@ -48,7 +48,10 @@ hcl2_value *hcl2_string(const char *s) {
   return v;
 }
 hcl2_value *hcl2_tuple(void) { return vnew(HCL2_TUPLE); }
+hcl2_value *hcl2_list(void) { return vnew(HCL2_LIST); }
+hcl2_value *hcl2_set(void) { return vnew(HCL2_SET); }
 hcl2_value *hcl2_object(void) { return vnew(HCL2_OBJECT); }
+hcl2_value *hcl2_map(void) { return vnew(HCL2_MAP); }
 
 void hcl2_value_free(hcl2_value *v) {
   if (v == NULL)
@@ -66,7 +69,7 @@ void hcl2_value_free(hcl2_value *v) {
 }
 
 bool hcl2_tuple_push(hcl2_value *t, hcl2_value *e) {
-  if (t == NULL || t->kind != HCL2_TUPLE || e == NULL)
+  if (t == NULL || !hcl2_is_seq(t->kind) || e == NULL)
     return false;
   hcl2_value **ni = realloc(t->items, (t->n + 1) * sizeof(*ni));
   if (ni == NULL)
@@ -76,7 +79,7 @@ bool hcl2_tuple_push(hcl2_value *t, hcl2_value *e) {
   return true;
 }
 bool hcl2_object_set(hcl2_value *o, const char *key, hcl2_value *val) {
-  if (o == NULL || o->kind != HCL2_OBJECT || val == NULL)
+  if (o == NULL || !hcl2_is_keyed(o->kind) || val == NULL)
     return false;
   for (size_t i = 0; i < o->nf; i++) {
     if (strcmp(o->fields[i].key, key) == 0) {
@@ -119,17 +122,17 @@ const char *hcl2_value_as_string(const hcl2_value *v) {
 size_t hcl2_value_len(const hcl2_value *v) {
   if (v == NULL)
     return 0;
-  if (v->kind == HCL2_TUPLE)
+  if (hcl2_is_seq(v->kind))
     return v->n;
-  if (v->kind == HCL2_OBJECT)
+  if (hcl2_is_keyed(v->kind))
     return v->nf;
   return 0;
 }
 const hcl2_value *hcl2_value_at(const hcl2_value *v, size_t i) {
-  return (v != NULL && v->kind == HCL2_TUPLE && i < v->n) ? v->items[i] : NULL;
+  return (v != NULL && hcl2_is_seq(v->kind) && i < v->n) ? v->items[i] : NULL;
 }
 const hcl2_value *hcl2_value_get(const hcl2_value *v, const char *key) {
-  if (v == NULL || v->kind != HCL2_OBJECT)
+  if (v == NULL || !hcl2_is_keyed(v->kind))
     return NULL;
   for (size_t i = 0; i < v->nf; i++)
     if (strcmp(v->fields[i].key, key) == 0)
@@ -151,39 +154,39 @@ hcl2_value *vclone(const hcl2_value *v) {
     return hcl2_number(v->num);
   case HCL2_STRING:
     return hcl2_string(v->str);
-  case HCL2_TUPLE: {
-    hcl2_value *t = hcl2_tuple();
+  default: /* a collection: clone preserving the exact kind */
+    break;
+  }
+  hcl2_value *out = vnew(v->kind);
+  if (out == NULL)
+    return NULL;
+  if (hcl2_is_seq(v->kind)) {
     for (size_t i = 0; i < v->n; i++) {
       hcl2_value *e = vclone(v->items[i]);
-      if (e == NULL || !hcl2_tuple_push(t, e)) {
+      if (e == NULL || !hcl2_tuple_push(out, e)) {
         hcl2_value_free(e);
-        hcl2_value_free(t);
+        hcl2_value_free(out);
         return NULL;
       }
     }
-    return t;
-  }
-  default: { /* HCL2_OBJECT */
-    hcl2_value *o = hcl2_object();
+  } else { /* keyed: object/map */
     for (size_t i = 0; i < v->nf; i++) {
       hcl2_value *e = vclone(v->fields[i].val);
-      if (e == NULL || !hcl2_object_set(o, v->fields[i].key, e)) {
+      if (e == NULL || !hcl2_object_set(out, v->fields[i].key, e)) {
         hcl2_value_free(e);
-        hcl2_value_free(o);
+        hcl2_value_free(out);
         return NULL;
       }
     }
-    return o;
   }
-  }
+  return out;
 }
 
 bool vequal(const hcl2_value *a, const hcl2_value *b) {
-  if (a->kind != b->kind)
+  if (a->kind != b->kind) /* different kinds (incl. tuple vs list) are unequal */
     return false;
   switch (a->kind) {
   case HCL2_NULL:
-    return true;
   case HCL2_UNKNOWN:
     return true; /* two unknowns compare equal (e.g. for set de-duplication) */
   case HCL2_BOOL:
@@ -192,23 +195,25 @@ bool vequal(const hcl2_value *a, const hcl2_value *b) {
     return a->num == b->num;
   case HCL2_STRING:
     return strcmp(a->str, b->str) == 0;
-  case HCL2_TUPLE:
+  default: /* a collection */
+    break;
+  }
+  if (hcl2_is_seq(a->kind)) {
     if (a->n != b->n)
       return false;
     for (size_t i = 0; i < a->n; i++)
       if (!vequal(a->items[i], b->items[i]))
         return false;
     return true;
-  default: /* HCL2_OBJECT */
-    if (a->nf != b->nf)
-      return false;
-    for (size_t i = 0; i < a->nf; i++) {
-      const hcl2_value *bv = hcl2_value_get(b, a->fields[i].key);
-      if (bv == NULL || !vequal(a->fields[i].val, bv))
-        return false;
-    }
-    return true;
   }
+  if (a->nf != b->nf) /* keyed: object/map */
+    return false;
+  for (size_t i = 0; i < a->nf; i++) {
+    const hcl2_value *bv = hcl2_value_get(b, a->fields[i].key);
+    if (bv == NULL || !vequal(a->fields[i].val, bv))
+      return false;
+  }
+  return true;
 }
 
 /* ===========================================================================

@@ -21,6 +21,12 @@ struct hcl2_value {
   size_t nf;
 };
 
+/* storage groups: item-indexed (tuple/list/set) vs string-keyed (object/map) */
+static inline bool hcl2_is_seq(hcl2_kind k) {
+  return k == HCL2_TUPLE || k == HCL2_LIST || k == HCL2_SET;
+}
+static inline bool hcl2_is_keyed(hcl2_kind k) { return k == HCL2_OBJECT || k == HCL2_MAP; }
+
 hcl2_value *vclone(const hcl2_value *v);
 bool vequal(const hcl2_value *a, const hcl2_value *b);
 const hcl2_value *ctx_var(hcl2_ctx *c, const char *name);

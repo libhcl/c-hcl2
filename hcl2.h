@@ -34,8 +34,13 @@ typedef enum {
   HCL2_BOOL,
   HCL2_NUMBER,
   HCL2_STRING,
-  HCL2_TUPLE,
-  HCL2_OBJECT,
+  /* structural collections (heterogeneous, fixed shape) */
+  HCL2_TUPLE,  /* ordered, item-indexed   */
+  HCL2_OBJECT, /* string-keyed            */
+  /* cty collection types (homogeneous element type) */
+  HCL2_LIST,    /* ordered, item-indexed; same storage as a tuple   */
+  HCL2_SET,     /* unordered, de-duplicated; same storage as a tuple */
+  HCL2_MAP,     /* string-keyed; same storage as an object           */
   HCL2_UNKNOWN, /* cty-style unknown: a placeholder whose concrete value is not
                  * yet known; operations on it propagate unknown */
 } hcl2_kind;
@@ -50,9 +55,14 @@ hcl2_value *hcl2_bool(bool b);
 hcl2_value *hcl2_number(double n);
 hcl2_value *hcl2_string(const char *s);
 hcl2_value *hcl2_tuple(void); /* empty; append with hcl2_tuple_push */
-bool hcl2_tuple_push(hcl2_value *tuple, hcl2_value *elem /* owned */);
+hcl2_value *hcl2_list(void);  /* empty cty list; append with hcl2_tuple_push */
+hcl2_value *hcl2_set(void);   /* empty cty set;  append with hcl2_tuple_push */
+/* Append to a tuple, list or set (any item-indexed collection). */
+bool hcl2_tuple_push(hcl2_value *seq, hcl2_value *elem /* owned */);
 hcl2_value *hcl2_object(void); /* empty; set with hcl2_object_set */
-bool hcl2_object_set(hcl2_value *object, const char *key, hcl2_value *val /* owned */);
+hcl2_value *hcl2_map(void);    /* empty cty map; set with hcl2_object_set */
+/* Set a key on an object or map (any string-keyed collection). */
+bool hcl2_object_set(hcl2_value *obj, const char *key, hcl2_value *val /* owned */);
 void hcl2_value_free(hcl2_value *v);
 
 /* --- value inspectors --- */
@@ -60,20 +70,19 @@ hcl2_kind hcl2_value_kind(const hcl2_value *v);
 bool hcl2_value_is_unknown(const hcl2_value *v);
 bool hcl2_value_as_bool(const hcl2_value *v, bool *out);
 bool hcl2_value_as_number(const hcl2_value *v, double *out);
-const char *hcl2_value_as_string(const hcl2_value *v);          /* NULL unless HCL2_STRING */
-size_t hcl2_value_len(const hcl2_value *v);                     /* tuple/object size, else 0 */
-const hcl2_value *hcl2_value_at(const hcl2_value *v, size_t i); /* tuple */
-const hcl2_value *hcl2_value_get(const hcl2_value *v, const char *key); /* object */
+const char *hcl2_value_as_string(const hcl2_value *v); /* NULL unless HCL2_STRING */
+size_t hcl2_value_len(const hcl2_value *v);            /* tuple/list/set/object/map size, else 0 */
+const hcl2_value *hcl2_value_at(const hcl2_value *v, size_t i);         /* tuple/list/set */
+const hcl2_value *hcl2_value_get(const hcl2_value *v, const char *key); /* object/map */
 
 /* --- type constraints & conversion (M4, in progress) ---
  *
- * A small cty-lite type model used as a *constraint*: hcl2_convert coerces a
- * value toward a target type (number<->string, string->bool, etc.) and
- * validates/normalises collections. NOTE: this value model has no distinct
- * list/set/map runtime kind yet -- list/set are represented as tuples and map
- * as an object -- so converting "to list(number)" yields a homogeneous tuple
- * (set additionally de-duplicates). The full cty type system (distinct
- * collection kinds, unknown values) is future M4 work; see ROADMAP.md.
+ * A small cty type model used as a *constraint*: hcl2_convert coerces a value
+ * toward a target type (number<->string, string->bool, etc.) and produces the
+ * matching cty collection kind. Converting to list(T)/set(T)/map(T) yields an
+ * HCL2_LIST / HCL2_SET / HCL2_MAP whose elements are each converted to T (a set
+ * additionally de-duplicates). A tuple converts to a list/set, an object to a
+ * map. (Still future: type-tracked unknowns and big-number precision.)
  *
  *   hcl2_type *t = hcl2_type_list(hcl2_type_number());
  *   hcl2_value *nums = hcl2_convert(v, t, err, sizeof err);  // tuple of numbers

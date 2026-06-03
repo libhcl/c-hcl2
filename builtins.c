@@ -54,7 +54,7 @@ static hcl2_value *bi_length(const hcl2_value *const *a, size_t n, char *e, size
   const hcl2_value *v = a[0];
   if (v->kind == HCL2_STRING)
     return hcl2_number((double)strlen(v->str));
-  if (v->kind == HCL2_TUPLE || v->kind == HCL2_OBJECT)
+  if (hcl2_is_seq(v->kind) || hcl2_is_keyed(v->kind))
     return hcl2_number((double)hcl2_value_len(v));
   everr(e, es, "length() needs a string, tuple or object");
   return NULL;
@@ -78,7 +78,7 @@ static hcl2_value *bi_lower(const hcl2_value *const *a, size_t n, char *e, size_
   return str1(a, n, e, es, false);
 }
 static hcl2_value *bi_join(const hcl2_value *const *a, size_t n, char *e, size_t es) {
-  if (n != 2 || a[0]->kind != HCL2_STRING || a[1]->kind != HCL2_TUPLE) {
+  if (n != 2 || a[0]->kind != HCL2_STRING || !hcl2_is_seq(a[1]->kind)) {
     everr(e, es, "join() needs (string, tuple)");
     return NULL;
   }
@@ -191,7 +191,7 @@ static hcl2_value *bi_concat(const hcl2_value *const *a, size_t n, char *e, size
   if (out == NULL)
     return NULL;
   for (size_t i = 0; i < n; i++) {
-    if (a[i]->kind != HCL2_TUPLE) {
+    if (!hcl2_is_seq(a[i]->kind)) {
       everr(e, es, "concat() needs tuples");
       hcl2_value_free(out);
       return NULL;
@@ -208,7 +208,7 @@ static hcl2_value *bi_concat(const hcl2_value *const *a, size_t n, char *e, size
   return out;
 }
 static hcl2_value *bi_keys(const hcl2_value *const *a, size_t n, char *e, size_t es) {
-  if (n != 1 || a[0]->kind != HCL2_OBJECT) {
+  if (n != 1 || !hcl2_is_keyed(a[0]->kind)) {
     everr(e, es, "keys() needs an object");
     return NULL;
   }
@@ -226,7 +226,7 @@ static hcl2_value *bi_keys(const hcl2_value *const *a, size_t n, char *e, size_t
   return out;
 }
 static hcl2_value *bi_values(const hcl2_value *const *a, size_t n, char *e, size_t es) {
-  if (n != 1 || a[0]->kind != HCL2_OBJECT) {
+  if (n != 1 || !hcl2_is_keyed(a[0]->kind)) {
     everr(e, es, "values() needs an object");
     return NULL;
   }
@@ -244,7 +244,7 @@ static hcl2_value *bi_values(const hcl2_value *const *a, size_t n, char *e, size
   return out;
 }
 static hcl2_value *bi_contains(const hcl2_value *const *a, size_t n, char *e, size_t es) {
-  if (n != 2 || a[0]->kind != HCL2_TUPLE) {
+  if (n != 2 || !hcl2_is_seq(a[0]->kind)) {
     everr(e, es, "contains() needs (tuple, value)");
     return NULL;
   }
@@ -254,7 +254,7 @@ static hcl2_value *bi_contains(const hcl2_value *const *a, size_t n, char *e, si
   return hcl2_bool(false);
 }
 static hcl2_value *bi_lookup(const hcl2_value *const *a, size_t n, char *e, size_t es) {
-  if (n != 3 || a[0]->kind != HCL2_OBJECT || a[1]->kind != HCL2_STRING) {
+  if (n != 3 || !hcl2_is_keyed(a[0]->kind) || a[1]->kind != HCL2_STRING) {
     everr(e, es, "lookup() needs (object, string, default)");
     return NULL;
   }
@@ -346,6 +346,8 @@ static bool json_emit(const hcl2_value *v, struct sb *s) {
     return sb_put(s, "\"", 1);
   }
   case HCL2_TUPLE:
+  case HCL2_LIST:
+  case HCL2_SET:
     if (!sb_put(s, "[", 1))
       return false;
     for (size_t i = 0; i < v->n; i++) {
@@ -355,7 +357,7 @@ static bool json_emit(const hcl2_value *v, struct sb *s) {
         return false;
     }
     return sb_put(s, "]", 1);
-  default: /* HCL2_OBJECT */
+  default: /* HCL2_OBJECT / HCL2_MAP */
     if (!sb_put(s, "{", 1))
       return false;
     for (size_t i = 0; i < v->nf; i++) {

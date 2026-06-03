@@ -436,6 +436,65 @@ int main(void) {
     }
   }
 
+  /* M4: distinct cty collection kinds (list/set/map) */
+  {
+    char err[256] = "";
+    hcl2_value *src = ev("[1, \"2\", 2]", NULL);
+    hcl2_type *lt = hcl2_type_list(hcl2_type_number());
+    hcl2_value *l = hcl2_convert(src, lt, err, sizeof(err));
+    check("convert -> list kind", l && hcl2_value_kind(l) == HCL2_LIST);
+    check("list len", l && hcl2_value_len(l) == 3);
+    double d;
+    check("list elem coerced", l && hcl2_value_as_number(hcl2_value_at(l, 1), &d) && d == 2);
+    hcl2_type *st = hcl2_type_set(hcl2_type_number());
+    hcl2_value *s = hcl2_convert(src, st, err, sizeof(err));
+    check("convert -> set kind", s && hcl2_value_kind(s) == HCL2_SET);
+    check("set dedups", s && hcl2_value_len(s) == 2);
+    hcl2_value_free(l);
+    hcl2_value_free(s);
+    hcl2_value_free(src);
+    hcl2_type_free(lt);
+    hcl2_type_free(st);
+
+    hcl2_value *osrc = ev("{a = \"1\", b = 2}", NULL);
+    hcl2_type *mt = hcl2_type_map(hcl2_type_number());
+    hcl2_value *m = hcl2_convert(osrc, mt, err, sizeof(err));
+    check("convert -> map kind", m && hcl2_value_kind(m) == HCL2_MAP);
+    check("map get coerced", m && hcl2_value_as_number(hcl2_value_get(m, "a"), &d) && d == 1);
+    /* list/map flow through the rest: length, for-expression, jsonencode */
+    hcl2_ctx *c = hcl2_ctx_new();
+    hcl2_value *lst = ev("[10, 20, 30]", NULL);
+    hcl2_type *lt2 = hcl2_type_list(hcl2_type_number());
+    hcl2_value *llv = hcl2_convert(lst, lt2, err, sizeof(err));
+    hcl2_ctx_set_var(c, "l", llv); /* ctx owns llv */
+    hcl2_ctx_set_var(c, "m", m);   /* ctx owns m */
+    check("length(list)", isnum(ev("length(l)", c), 3));
+    check("index list", isnum(ev("l[1]", c), 20));
+    check("for over list", isnum(ev("[for x in l : x + 1][0]", c), 11));
+    check("length(map)", isnum(ev("length(m)", c), 2));
+    check("index map", isnum(ev("m[\"a\"]", c), 1));
+    check("for over map values", isnum(ev("[for k, v in m : v][0]", c), 1));
+    check("jsonencode list", isstr(ev("jsonencode(l)", c), "[10,20,30]"));
+    check("jsonencode map", isstr(ev("jsonencode(m)", c), "{\"a\":1,\"b\":2}"));
+    hcl2_value_free(lst);
+    hcl2_value_free(osrc);
+    hcl2_type_free(mt);
+    hcl2_type_free(lt2);
+    hcl2_ctx_free(c);
+  }
+  /* a list has a distinct kind from a tuple with the same elements */
+  {
+    char err[256] = "";
+    hcl2_value *tup = ev("[1, 2]", NULL);
+    hcl2_type *lt = hcl2_type_list(hcl2_type_number());
+    hcl2_value *lst = hcl2_convert(tup, lt, err, sizeof(err));
+    check("list kind != tuple kind",
+          lst && hcl2_value_kind(lst) == HCL2_LIST && hcl2_value_kind(tup) == HCL2_TUPLE);
+    hcl2_value_free(tup);
+    hcl2_value_free(lst);
+    hcl2_type_free(lt);
+  }
+
   /* M4 (partial): unknown values + propagation */
   {
     hcl2_ctx *ctx = hcl2_ctx_new();

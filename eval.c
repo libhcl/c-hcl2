@@ -330,7 +330,7 @@ static void handle_for(struct trender *t, struct sbuf *s) {
     }
     return;
   }
-  if (coll->kind != HCL2_TUPLE && coll->kind != HCL2_OBJECT) {
+  if (!hcl2_is_seq(coll->kind) && !hcl2_is_keyed(coll->kind)) {
     everr(t->err, t->errsz, "%{ for } requires a tuple or object");
     hcl2_value_free(coll);
     free(kvar);
@@ -354,7 +354,7 @@ static void handle_for(struct trender *t, struct sbuf *s) {
   }
   hcl2_value *saved_v = ctx_take_var(t->ctx, vvar);
   hcl2_value *saved_k = kvar ? ctx_take_var(t->ctx, kvar) : NULL;
-  size_t count = (coll->kind == HCL2_TUPLE) ? coll->n : coll->nf;
+  size_t count = hcl2_is_seq(coll->kind) ? coll->n : coll->nf;
 
   if (count == 0) { /* still traverse the body once to consume %{ endfor } */
     t->active = false;
@@ -363,7 +363,7 @@ static void handle_for(struct trender *t, struct sbuf *s) {
   } else {
     for (size_t i = 0; i < count && !t->fail; i++) {
       hcl2_value *vval, *kval = NULL;
-      if (coll->kind == HCL2_TUPLE) {
+      if (hcl2_is_seq(coll->kind)) {
         vval = vclone(coll->items[i]);
         if (kvar)
           kval = hcl2_number((double)i);
@@ -641,7 +641,7 @@ static hcl2_value *eval_for(const struct node *x, hcl2_ctx *ctx, char *err, size
     hcl2_value_free(coll);
     return hcl2_unknown();
   }
-  if (coll->kind != HCL2_TUPLE && coll->kind != HCL2_OBJECT) {
+  if (!hcl2_is_seq(coll->kind) && !hcl2_is_keyed(coll->kind)) {
     everr(err, errsz, "for-expression requires a tuple or object");
     hcl2_value_free(coll);
     return NULL;
@@ -662,10 +662,10 @@ static hcl2_value *eval_for(const struct node *x, hcl2_ctx *ctx, char *err, size
 
   hcl2_value *result = object ? hcl2_object() : hcl2_tuple();
   bool ok = (result != NULL);
-  size_t count = (coll->kind == HCL2_TUPLE) ? coll->n : coll->nf;
+  size_t count = hcl2_is_seq(coll->kind) ? coll->n : coll->nf;
   for (size_t i = 0; ok && i < count; i++) {
     hcl2_value *vval, *kval = NULL;
-    if (coll->kind == HCL2_TUPLE) {
+    if (hcl2_is_seq(coll->kind)) {
       vval = vclone(coll->items[i]);
       if (x->kvar)
         kval = hcl2_number((double)i);
@@ -859,11 +859,11 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
       return hcl2_unknown();
     }
     const hcl2_value *f = NULL;
-    if (base->kind == HCL2_TUPLE && idx->kind == HCL2_NUMBER) {
+    if (hcl2_is_seq(base->kind) && idx->kind == HCL2_NUMBER) {
       double d = idx->num;
       if (d >= 0 && d < (double)base->n)
         f = base->items[(size_t)d];
-    } else if (base->kind == HCL2_OBJECT && idx->kind == HCL2_STRING) {
+    } else if (hcl2_is_keyed(base->kind) && idx->kind == HCL2_STRING) {
       f = hcl2_value_get(base, idx->str);
     }
     if (f == NULL)
