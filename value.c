@@ -24,6 +24,15 @@ static hcl2_value *vnew(hcl2_kind k) {
 }
 hcl2_value *hcl2_null(void) { return vnew(HCL2_NULL); }
 hcl2_value *hcl2_unknown(void) { return vnew(HCL2_UNKNOWN); }
+hcl2_value *hcl2_unknown_of(hcl2_type *type) {
+  hcl2_value *v = vnew(HCL2_UNKNOWN);
+  if (v == NULL) {
+    hcl2_type_free(type); /* consume ownership even on failure */
+    return NULL;
+  }
+  v->utype = type; /* NULL stays dynamic/any */
+  return v;
+}
 hcl2_value *hcl2_bool(bool b) {
   hcl2_value *v = vnew(HCL2_BOOL);
   if (v)
@@ -56,6 +65,7 @@ hcl2_value *hcl2_map(void) { return vnew(HCL2_MAP); }
 void hcl2_value_free(hcl2_value *v) {
   if (v == NULL)
     return;
+  hcl2_type_free(v->utype); /* set only on a typed unknown */
   free(v->str);
   for (size_t i = 0; i < v->n; i++)
     hcl2_value_free(v->items[i]);
@@ -102,6 +112,11 @@ bool hcl2_object_set(hcl2_value *o, const char *key, hcl2_value *val) {
 
 hcl2_kind hcl2_value_kind(const hcl2_value *v) { return v->kind; }
 bool hcl2_value_is_unknown(const hcl2_value *v) { return v != NULL && v->kind == HCL2_UNKNOWN; }
+const hcl2_type *hcl2_unknown_type(const hcl2_value *v) {
+  if (v == NULL || v->kind != HCL2_UNKNOWN)
+    return NULL;
+  return v->utype != NULL ? v->utype : hcl2_type_any();
+}
 bool hcl2_value_as_bool(const hcl2_value *v, bool *out) {
   if (v == NULL || v->kind != HCL2_BOOL)
     return false;
@@ -147,7 +162,7 @@ hcl2_value *vclone(const hcl2_value *v) {
   case HCL2_NULL:
     return hcl2_null();
   case HCL2_UNKNOWN:
-    return hcl2_unknown();
+    return hcl2_unknown_of(type_clone(v->utype)); /* preserves the tracked type */
   case HCL2_BOOL:
     return hcl2_bool(v->b);
   case HCL2_NUMBER:

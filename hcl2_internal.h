@@ -19,6 +19,8 @@ struct hcl2_value {
   size_t n;
   struct kv *fields; /* object */
   size_t nf;
+  hcl2_type *utype; /* HCL2_UNKNOWN only: the cty type this unknown stands for
+                     * (NULL == fully dynamic / "any"); owned by the value */
 };
 
 /* storage groups: item-indexed (tuple/list/set) vs string-keyed (object/map) */
@@ -29,6 +31,8 @@ static inline bool hcl2_is_keyed(hcl2_kind k) { return k == HCL2_OBJECT || k == 
 
 hcl2_value *vclone(const hcl2_value *v);
 bool vequal(const hcl2_value *a, const hcl2_value *b);
+/* Deep-copy a type constraint (returns singletons as-is); defined in convert.c. */
+hcl2_type *type_clone(const hcl2_type *t);
 const hcl2_value *ctx_var(hcl2_ctx *c, const char *name);
 /* Detach and return the owned value bound to name (NULL if absent); used to
  * save/restore for-expression loop-variable scope. */

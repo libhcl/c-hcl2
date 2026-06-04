@@ -58,6 +58,18 @@ hcl2_type *hcl2_type_list(hcl2_type *elem) { return coll(TY_LIST, elem); }
 hcl2_type *hcl2_type_set(hcl2_type *elem) { return coll(TY_SET, elem); }
 hcl2_type *hcl2_type_map(hcl2_type *elem) { return coll(TY_MAP, elem); }
 
+/* Deep-copy a type constraint. Primitive singletons (and NULL) are shared, not
+ * copied -- hcl2_type_free leaves them alone. Collection types are rebuilt.
+ * Returns NULL only when cloning a collection runs out of memory. */
+hcl2_type *type_clone(const hcl2_type *t) {
+  if (t == NULL || t->is_static)
+    return (hcl2_type *)t;
+  hcl2_type *e = type_clone(t->elem);
+  if (t->elem != NULL && e == NULL)
+    return NULL; /* OOM cloning the element */
+  return coll(t->kind, e);
+}
+
 static hcl2_value *num_to_string(double n) {
   char buf[40];
   snprintf(buf, sizeof(buf), "%g", n);
@@ -71,8 +83,18 @@ hcl2_value *hcl2_convert(const hcl2_value *v, const hcl2_type *t, char *err, siz
     everr(err, errsz, "convert: null argument");
     return NULL;
   }
-  if (v->kind == HCL2_UNKNOWN) /* unknown converts to unknown of any type */
-    return hcl2_unknown();
+  if (v->kind == HCL2_UNKNOWN) {
+    /* An unknown stays unknown but is refined to the target type. Converting to
+     * `any` is the identity, so it keeps whatever type it already carried. */
+    if (t->kind == TY_ANY)
+      return vclone(v);
+    hcl2_type *ct = type_clone(t);
+    if (ct == NULL) { /* OOM cloning a collection target type */
+      everr(err, errsz, "convert: out of memory");
+      return NULL;
+    }
+    return hcl2_unknown_of(ct);
+  }
   switch (t->kind) {
   case TY_ANY:
     return vclone(v);

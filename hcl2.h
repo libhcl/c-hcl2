@@ -48,10 +48,15 @@ typedef enum {
 
 typedef struct hcl2_value hcl2_value;
 typedef struct hcl2_ctx hcl2_ctx;
+typedef struct hcl2_type hcl2_type;
 
 /* --- value constructors (caller owns the result; free with hcl2_value_free) --- */
 hcl2_value *hcl2_null(void);
-hcl2_value *hcl2_unknown(void); /* a cty-style unknown placeholder */
+hcl2_value *hcl2_unknown(void); /* a cty-style unknown placeholder (dynamic type) */
+/* A typed unknown: a placeholder known to be of type `type` (TAKES OWNERSHIP of
+ * `type`, like the collection type constructors). hcl2_convert refines an
+ * unknown to its target type, so a converted unknown reports that type. */
+hcl2_value *hcl2_unknown_of(hcl2_type *type);
 hcl2_value *hcl2_bool(bool b);
 hcl2_value *hcl2_number(double n);
 hcl2_value *hcl2_string(const char *s);
@@ -69,6 +74,10 @@ void hcl2_value_free(hcl2_value *v);
 /* --- value inspectors --- */
 hcl2_kind hcl2_value_kind(const hcl2_value *v);
 bool hcl2_value_is_unknown(const hcl2_value *v);
+/* The cty type an unknown stands for: a typed unknown returns its type, a
+ * dynamic unknown (hcl2_unknown) returns hcl2_type_any(), and a non-unknown
+ * value returns NULL. The returned type is owned by the value -- do not free. */
+const hcl2_type *hcl2_unknown_type(const hcl2_value *v);
 bool hcl2_value_as_bool(const hcl2_value *v, bool *out);
 bool hcl2_value_as_number(const hcl2_value *v, double *out);
 const char *hcl2_value_as_string(const hcl2_value *v); /* NULL unless HCL2_STRING */
@@ -89,7 +98,6 @@ const hcl2_value *hcl2_value_get(const hcl2_value *v, const char *key); /* objec
  *   hcl2_value *nums = hcl2_convert(v, t, err, sizeof err);  // tuple of numbers
  *   hcl2_type_free(t);   // frees the list type and its owned element
  */
-typedef struct hcl2_type hcl2_type;
 
 /* Primitive/dynamic type singletons (do NOT free; hcl2_type_free is a no-op). */
 hcl2_type *hcl2_type_any(void); /* dynamic: hcl2_convert is the identity */

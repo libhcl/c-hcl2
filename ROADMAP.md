@@ -54,8 +54,14 @@ this is built milestone by milestone.
   `jsonencode`, etc. (list/set share tuple storage, map shares object storage).
   **Unknown values done** (`hcl2_unknown` / `HCL2_UNKNOWN`): operations
   propagate unknown through binary/unary/conditional/index/attribute/call/
-  for-expression and template interpolation + directives; convert(unknown) is
-  unknown. *Not yet:* type-tracked unknowns (the unknown here is fully dynamic).
+  for-expression and template interpolation + directives.
+  **Typed unknowns done**: an unknown can carry the cty type it stands for
+  (`hcl2_unknown_of(type)`, queried via `hcl2_unknown_type`); `hcl2_convert`
+  refines an unknown to its target type (converting to `any` is the identity and
+  preserves the carried type). `hcl2_unknown()` remains a fully dynamic
+  ("any"-typed) unknown. *Not yet:* eval-level type refinement -- unknowns
+  produced *by operations* (e.g. `unknown + 1`) are still dynamic rather than
+  carrying the inferred result type.
 - ⬜ richer numbers (big.Float semantics) instead of `double`
 - 🟡 source-range diagnostics: both syntax (lex/parse) **and** semantic/eval
   errors report `at line L, column C`. AST nodes carry the position (computed at
@@ -104,7 +110,10 @@ by impact:
 - ✅ nested strings inside interpolation (`"${ f("x") }"`) — the string lexer is
   interpolation-aware (tracks `${ }`/`%{ }` depth and nested quotes)
 - ✅ distinct cty collection kinds (list/set/map vs tuple/object) + the
-  tuple-vs-list distinction — done. *Still:* type-tracked unknowns
+  tuple-vs-list distinction — done
+- ✅ type-tracked (typed) unknowns — done (`hcl2_unknown_of` / `hcl2_unknown_type`;
+  `hcl2_convert` refines). *Still:* eval-level inference of result types onto
+  operation-produced unknowns
 - ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double`)
 - ⬜ full source ranges (start+end spans) and multi-error reporting
 - ⬜ the JSON profile's schema-driven body layer

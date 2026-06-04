@@ -619,14 +619,52 @@ int main(void) {
     check("unknown template for", evunk("\"%{ for x in u }a%{ endfor }\"", ctx));
     /* a known tuple may hold unknown elements (cty: the tuple stays known) */
     check("known tuple of unknowns", !evunk("[for x in [1, 2] : x + u]", ctx));
-    /* convert(unknown) -> unknown of any target type */
+    /* typed unknowns: the type travels with the unknown */
     {
       char err[256] = "";
+      /* a plain unknown is dynamic ("any"); a non-unknown has no unknown-type */
+      hcl2_value *dyn = hcl2_unknown();
+      check("dyn unknown type is any", hcl2_unknown_type(dyn) == hcl2_type_any());
+      check("number has no unknown type", hcl2_unknown_type(hcl2_number(1)) == NULL);
+      check("unknown_type NULL safe", hcl2_unknown_type(NULL) == NULL);
+      hcl2_value_free(dyn);
+
+      /* hcl2_unknown_of carries its type (primitive singletons compare by ptr) */
+      hcl2_value *un = hcl2_unknown_of(hcl2_type_number());
+      check("unknown_of is unknown", hcl2_value_is_unknown(un));
+      check("unknown_of keeps type", hcl2_unknown_type(un) == hcl2_type_number());
+
+      /* convert refines a dynamic unknown to the target type */
       hcl2_value *u = hcl2_unknown();
-      hcl2_value *out = hcl2_convert(u, hcl2_type_number(), err, sizeof(err));
-      check("unknown converts to unknown", out && hcl2_value_is_unknown(out));
+      hcl2_value *cv = hcl2_convert(u, hcl2_type_string(), err, sizeof(err));
+      check("convert refines unknown", cv && hcl2_value_is_unknown(cv));
+      check("convert refines type", hcl2_unknown_type(cv) == hcl2_type_string());
+
+      /* convert to `any` is the identity: it preserves the carried type */
+      hcl2_value *idv = hcl2_convert(un, hcl2_type_any(), err, sizeof(err));
+      check("convert any preserves type", idv && hcl2_unknown_type(idv) == hcl2_type_number());
+
+      /* convert to a collection type yields a typed (non-primitive) unknown */
+      hcl2_type *lt = hcl2_type_list(hcl2_type_number());
+      hcl2_value *lu = hcl2_convert(u, lt, err, sizeof(err));
+      check("convert unknown to list", lu && hcl2_value_is_unknown(lu));
+      check("convert unknown list typed",
+            hcl2_unknown_type(lu) != NULL && hcl2_unknown_type(lu) != hcl2_type_any());
+      hcl2_type_free(lt);
+
+      /* clone keeps the type: binding a typed unknown and evaluating it clones */
+      hcl2_ctx *tc = hcl2_ctx_new();
+      hcl2_ctx_set_var(tc, "tu", hcl2_unknown_of(hcl2_type_string()));
+      hcl2_value *ev_tu = ev("tu", tc);
+      check("clone keeps unknown type", ev_tu && hcl2_unknown_type(ev_tu) == hcl2_type_string());
+      hcl2_value_free(ev_tu);
+      hcl2_ctx_free(tc);
+
+      hcl2_value_free(un);
       hcl2_value_free(u);
-      hcl2_value_free(out);
+      hcl2_value_free(cv);
+      hcl2_value_free(idv);
+      hcl2_value_free(lu);
     }
     /* known arithmetic with no unknown stays known and correct */
     check("known stays known", isnum(ev("n + 1", ctx), 4));
@@ -641,6 +679,7 @@ int main(void) {
     check("conv str->num", isnum(hcl2_convert_helper("\"3.5\"", hcl2_type_number()), 3.5));
     check("conv str->bool", isbool(hcl2_convert_helper("\"false\"", hcl2_type_bool()), false));
     check("conv num->num id", isnum(hcl2_convert_helper("7", hcl2_type_number()), 7));
+    check("conv bool->bool id", isbool(hcl2_convert_helper("true", hcl2_type_bool()), true));
     check("conv any id", isnum(hcl2_convert_helper("9", hcl2_type_any()), 9));
     check("conv str->num bad", hcl2_convert_helper("\"abc\"", hcl2_type_number()) == NULL);
     check("conv num->bool bad", hcl2_convert_helper("1", hcl2_type_bool()) == NULL);
@@ -1199,11 +1238,13 @@ int main(void) {
     hcl2_value *msrc = ev("{a = \"1\", b = 2}", NULL);
     hcl2_value *nsrc = ev("42", NULL);
     hcl2_value *bsrc = ev("\"true\"", NULL);
+    hcl2_value *usrc = hcl2_unknown(); /* drives type_clone + unknown_of */
     hcl2_type *lt = hcl2_type_set(hcl2_type_number());
     hcl2_type *mt = hcl2_type_map(hcl2_type_string());
     hcl2_type *st = hcl2_type_string(); /* singleton */
     hcl2_type *bt = hcl2_type_bool();   /* singleton */
     hcl2_type *at = hcl2_type_list(hcl2_type_any());
+    hcl2_type *ut = hcl2_type_list(hcl2_type_map(hcl2_type_number())); /* nested clone */
     bool cok = false;
     for (int b = 0; b <= 5000; b++) {
       hcl2_alloc_budget = b;
@@ -1213,13 +1254,15 @@ int main(void) {
       hcl2_value *o3 = hcl2_convert(nsrc, st, e, sizeof(e));
       hcl2_value *o4 = hcl2_convert(bsrc, bt, e, sizeof(e));
       hcl2_value *o5 = hcl2_convert(lsrc, at, e, sizeof(e));
+      hcl2_value *o6 = hcl2_convert(usrc, ut, e, sizeof(e)); /* unknown -> typed */
       hcl2_alloc_budget = -1;
-      bool done = o1 && o2 && o3 && o4 && o5;
+      bool done = o1 && o2 && o3 && o4 && o5 && o6;
       hcl2_value_free(o1);
       hcl2_value_free(o2);
       hcl2_value_free(o3);
       hcl2_value_free(o4);
       hcl2_value_free(o5);
+      hcl2_value_free(o6);
       if (done) {
         cok = true;
         break;
@@ -1230,9 +1273,11 @@ int main(void) {
     hcl2_value_free(msrc);
     hcl2_value_free(nsrc);
     hcl2_value_free(bsrc);
+    hcl2_value_free(usrc);
     hcl2_type_free(lt);
     hcl2_type_free(mt);
     hcl2_type_free(at);
+    hcl2_type_free(ut);
 
     /* ctx_set_var / ctx_set_func OOM (realloc + strdup-name arms) */
     bool ctxok = false;
