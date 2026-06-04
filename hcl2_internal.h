@@ -149,8 +149,10 @@ struct hcl2_doc {
   struct hcl2_body *root;
 };
 /* Parse a body. A top-level body ends at EOF; a nested one ends at '}' (left as
- * the current token, not consumed). Returns NULL on error. */
-struct hcl2_body *parse_body(struct parser *p, bool toplevel);
+ * the current token, not consumed). Returns NULL on error. When `dg` is
+ * non-NULL, body-level errors are recorded into it and parsing recovers at the
+ * next line instead of aborting (multi-error mode). */
+struct hcl2_body *parse_body(struct parser *p, bool toplevel, struct hcl2_diags *dg);
 void hcl2_body_free(struct hcl2_body *b);
 
 #endif /* C_HCL2_INTERNAL_H */

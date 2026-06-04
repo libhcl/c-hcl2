@@ -152,6 +152,25 @@ typedef struct hcl2_block hcl2_block;
 
 /* Parse a whole document body. Returns NULL on error (message in err). */
 hcl2_doc *hcl2_parse(const char *src, size_t len, char *err, size_t errsz);
+
+/* --- multi-error parsing (M4) ---
+ * Like hcl2_parse, but instead of stopping at the first error it recovers at
+ * the next line and collects *all* body-level errors into a diagnostics list.
+ * Returns a best-effort (possibly partial) document, or NULL if nothing could
+ * be parsed; *out always receives a diagnostics list to free with
+ * hcl2_diags_free. A successful parse yields hcl2_diags_count() == 0.
+ *
+ *   hcl2_diags *d = NULL;
+ *   hcl2_doc *doc = hcl2_parse_diags(src, len, &d);
+ *   for (size_t i = 0; i < hcl2_diags_count(d); i++)
+ *     fprintf(stderr, "%s\n", hcl2_diags_msg(d, i));
+ *   hcl2_diags_free(d); hcl2_doc_free(doc);
+ */
+typedef struct hcl2_diags hcl2_diags;
+hcl2_doc *hcl2_parse_diags(const char *src, size_t len, hcl2_diags **out);
+size_t hcl2_diags_count(const hcl2_diags *d);
+const char *hcl2_diags_msg(const hcl2_diags *d, size_t i); /* "hcl2: ... at line L, column C" */
+void hcl2_diags_free(hcl2_diags *d);
 void hcl2_doc_free(hcl2_doc *doc);
 const hcl2_body *hcl2_doc_root(const hcl2_doc *doc);
 

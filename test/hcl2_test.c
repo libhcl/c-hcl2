@@ -121,6 +121,7 @@ static bool oom_scan_expr(const char *s) {
   return false;
 }
 static bool oom_scan_doc(const char *s) {
+  bool succeeded = false;
   for (int b = 0; b <= 5000; b++) {
     hcl2_alloc_budget = b;
     char err[256] = "";
@@ -128,10 +129,10 @@ static bool oom_scan_doc(const char *s) {
     hcl2_alloc_budget = -1;
     if (d) {
       hcl2_doc_free(d);
-      return true;
+      succeeded = true;
     }
   }
-  return false;
+  return succeeded;
 }
 static bool oom_scan_json(const char *s) {
   for (int b = 0; b <= 5000; b++) {
@@ -145,6 +146,22 @@ static bool oom_scan_json(const char *s) {
     }
   }
   return false;
+}
+/* Drive every allocation arm of the multi-error parser, including the
+ * diagnostics-list growth and the recovery cleanup paths. parse_diags returns
+ * a best-effort document on most budgets (NULL only when the body/doc calloc
+ * itself fails), so we iterate the whole range rather than stopping early; the
+ * point is that no budget leaks or crashes under ASan. */
+static bool oom_scan_diags(const char *s) {
+  for (int b = 0; b <= 5000; b++) {
+    hcl2_alloc_budget = b;
+    hcl2_diags *d = NULL;
+    hcl2_doc *doc = hcl2_parse_diags(s, strlen(s), &d);
+    hcl2_alloc_budget = -1;
+    hcl2_diags_free(d);
+    hcl2_doc_free(doc);
+  }
+  return true;
 }
 #endif
 
@@ -344,6 +361,91 @@ int main(void) {
     check("bi unknown arg", evunk("jsonencode(u)", uc));
     check("bi concat unknown", evunk("concat(u, [1])", uc));
     hcl2_ctx_free(uc);
+  }
+
+  /* M4: multi-error parsing with recovery */
+  {
+    const char *src = "a = 1\nb = )\nc = 2\nd = *\ne = 3\nsvc x {\n  bad = +\n}\nf = 4\n";
+    hcl2_diags *d = NULL;
+    hcl2_doc *doc = hcl2_parse_diags(src, strlen(src), &d);
+    check("diags doc non-null", doc != NULL);
+    check("diags collected 3", hcl2_diags_count(d) == 3);
+    check("diag 0 line 2", strstr(hcl2_diags_msg(d, 0), "line 2") != NULL);
+    check("diag 1 line 4", strstr(hcl2_diags_msg(d, 1), "line 4") != NULL);
+    check("diag 2 line 7 (in block)", strstr(hcl2_diags_msg(d, 2), "line 7") != NULL);
+    /* recovery kept every valid attribute */
+    const hcl2_body *root = hcl2_doc_root(doc);
+    check("recovered a", hcl2_body_has_attr(root, "a"));
+    check("recovered c", hcl2_body_has_attr(root, "c"));
+    check("recovered e", hcl2_body_has_attr(root, "e"));
+    check("recovered f", hcl2_body_has_attr(root, "f"));
+    check("diag msg oob NULL", hcl2_diags_msg(d, 99) == NULL);
+    hcl2_diags_free(d);
+    hcl2_doc_free(doc);
+  }
+  {
+    /* a clean document yields zero diagnostics */
+    const char *src = "x = 1\ny = 2\n";
+    hcl2_diags *d = NULL;
+    hcl2_doc *doc = hcl2_parse_diags(src, strlen(src), &d);
+    check("clean diags 0", hcl2_diags_count(d) == 0);
+    check("diags count NULL", hcl2_diags_count(NULL) == 0);
+    hcl2_diags_free(d);
+    hcl2_doc_free(doc);
+  }
+  {
+    /* recovery from a non-name token at the start of a body */
+    const char *src = "* nonsense\na = 1\n";
+    hcl2_diags *d = NULL;
+    hcl2_doc *doc = hcl2_parse_diags(src, strlen(src), &d);
+    check("diags non-name 1", hcl2_diags_count(d) == 1);
+    check("diags non-name recovered a", hcl2_body_has_attr(hcl2_doc_root(doc), "a"));
+    hcl2_diags_free(d);
+    hcl2_doc_free(doc);
+  }
+  {
+    /* recovery skips a stray '}' at the top level */
+    const char *src = "}\na = 1\n";
+    hcl2_diags *d = NULL;
+    hcl2_doc *doc = hcl2_parse_diags(src, strlen(src), &d);
+    check("diags stray-rbrace 1", hcl2_diags_count(d) == 1);
+    check("diags stray-rbrace recovered a", hcl2_body_has_attr(hcl2_doc_root(doc), "a"));
+    hcl2_diags_free(d);
+    hcl2_doc_free(doc);
+  }
+  {
+    /* an unterminated block at EOF is reported but can't be recovered past */
+    const char *src = "a = 1\nsvc {\n  b = 2\n";
+    hcl2_diags *d = NULL;
+    hcl2_doc *doc = hcl2_parse_diags(src, strlen(src), &d);
+    check("diags eof-in-block >=1", hcl2_diags_count(d) >= 1);
+    check("diags eof-in-block kept a", hcl2_body_has_attr(hcl2_doc_root(doc), "a"));
+    hcl2_diags_free(d);
+    hcl2_doc_free(doc);
+  }
+  {
+    /* defensive accessor guards */
+    check("diags_free NULL ok", (hcl2_diags_free(NULL), true));
+    check("block_at NULL body", hcl2_body_block_at(NULL, NULL, 0) == NULL);
+  }
+  {
+    /* regression: a lone '|'/'&'/invalid byte used to produce a non-advancing
+     * T_ERR, so the recovery resync loop (parse_diags) spun forever. The lexer
+     * now always consumes the offending byte; recovery must terminate. */
+    const char *bad[] = {
+        "{for k, v in {a = 1, =bo = 2} : k =|> v}", /* original fuzz find */
+        "a = 1 | 2\nb = 3\n",
+        "a = 1 & 2\nb = 3\n",
+        "a = `\nb = 3\n",
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+      hcl2_diags *d = NULL;
+      hcl2_doc *doc = hcl2_parse_diags(bad[i], strlen(bad[i]), &d);
+      check("diags lone-op terminates", doc != NULL); /* and it returned at all */
+      check("diags lone-op >=1 diag", hcl2_diags_count(d) >= 1);
+      hcl2_diags_free(d);
+      hcl2_doc_free(doc);
+    }
   }
 
   /* M5 (partial): JSON value parsing */
@@ -1070,6 +1172,17 @@ int main(void) {
     for (size_t i = 0; i < sizeof(docs) / sizeof(docs[0]); i++)
       alld = oom_scan_doc(docs[i]) && alld;
     check("oom scan: documents", alld);
+
+    /* multi-error parser: clean + malformed inputs drive the diagnostics-list
+     * growth and recovery cleanup arms under every allocation budget. */
+    const char *diagdocs[] = {
+        "a = 1\nb = 2\n",
+        "a = 1\nb = )\nc = 2\n* junk\n}\nsvc x {\n  bad = +\n}\nf = 4\n",
+    };
+    bool alldg = true;
+    for (size_t i = 0; i < sizeof(diagdocs) / sizeof(diagdocs[0]); i++)
+      alldg = oom_scan_diags(diagdocs[i]) && alldg;
+    check("oom scan: diags", alldg);
 
     const char *jsons[] = {
         "{\"a\": 1, \"b\": [true, null, \"x\\u00e9\"], \"c\": {\"d\": -2.5e3}}",

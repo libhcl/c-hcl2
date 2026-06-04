@@ -24,6 +24,42 @@ static bool push(void ***arr, size_t *n, void *item) {
   return true;
 }
 
+/* --- diagnostics list (multi-error parsing) --- */
+struct hcl2_diags {
+  char **msgs;
+  size_t n;
+};
+static void diags_add(struct hcl2_diags *d, const char *msg) {
+  if (d == NULL || msg == NULL || msg[0] == '\0')
+    return;
+  char **nm = realloc(d->msgs, (d->n + 1) * sizeof(*nm));
+  if (nm == NULL)
+    return; /* best-effort: drop the diagnostic under OOM */
+  d->msgs = nm;
+  d->msgs[d->n] = strdup(msg);
+  if (d->msgs[d->n] != NULL)
+    d->n++;
+}
+
+/* Error recovery: skip tokens until the start of a later source line (or the
+ * end of the body / input), so the next attribute or block can be parsed. */
+static void resync(struct parser *p) {
+  struct lexer *l = &p->lx;
+  if (l->tok == T_EOF || l->tok == T_RC)
+    return;
+  int line, col;
+  lx_linecol(l, l->tokpos, &line, &col);
+  for (;;) {
+    lex(l);
+    if (l->tok == T_EOF || l->tok == T_RC)
+      return;
+    int l2, c2;
+    lx_linecol(l, l->tokpos, &l2, &c2);
+    if (l2 > line)
+      return;
+  }
+}
+
 static void attr_free(struct hcl2_attr *a) {
   if (a == NULL)
     return;
@@ -82,7 +118,7 @@ static bool parse_attr(struct parser *p, struct hcl2_body *b, char *name) {
 /* Parse `type label... { body }` (the leading IDENT already consumed into
  * `type`, and the current token is whatever followed it). Takes ownership of
  * `type` on every path. */
-static bool parse_block(struct parser *p, struct hcl2_body *b, char *type) {
+static bool parse_block(struct parser *p, struct hcl2_body *b, char *type, struct hcl2_diags *dg) {
   struct lexer *l = &p->lx;
   struct hcl2_block *bl = calloc(1, sizeof(*bl));
   if (bl == NULL) {
@@ -105,7 +141,7 @@ static bool parse_block(struct parser *p, struct hcl2_body *b, char *type) {
     return false;
   }
   lex(l); /* consume '{' */
-  bl->body = parse_body(p, false);
+  bl->body = parse_body(p, false, dg);
   if (bl->body == NULL) {
     block_free(bl);
     return false;
@@ -119,7 +155,7 @@ static bool parse_block(struct parser *p, struct hcl2_body *b, char *type) {
   return true;
 }
 
-struct hcl2_body *parse_body(struct parser *p, bool toplevel) {
+struct hcl2_body *parse_body(struct parser *p, bool toplevel, struct hcl2_diags *dg) {
   struct lexer *l = &p->lx;
   struct hcl2_body *b = calloc(1, sizeof(*b));
   if (b == NULL)
@@ -129,6 +165,10 @@ struct hcl2_body *parse_body(struct parser *p, bool toplevel) {
       if (toplevel)
         return b;
       lx_err(l, "unexpected end of input (expected '}')");
+      if (dg != NULL) { /* can't recover past EOF; keep what we have */
+        diags_add(dg, l->err);
+        return b;
+      }
       hcl2_body_free(b);
       return NULL;
     }
@@ -136,23 +176,43 @@ struct hcl2_body *parse_body(struct parser *p, bool toplevel) {
       if (!toplevel)
         return b; /* leave '}' for the caller to consume */
       lx_err(l, "unexpected '}'");
+      if (dg != NULL) {
+        diags_add(dg, l->err);
+        l->err[0] = '\0';
+        lex(l); /* skip the stray '}' and continue */
+        continue;
+      }
       hcl2_body_free(b);
       return NULL;
     }
     if (l->tok != T_IDENT) {
       lx_err(l, "expected an attribute or block name");
+      if (dg != NULL) {
+        diags_add(dg, l->err);
+        l->err[0] = '\0';
+        resync(p);
+        continue;
+      }
       hcl2_body_free(b);
       return NULL;
     }
     char *name = strdup(l->text);
     if (name == NULL) {
+      if (dg != NULL)
+        return b; /* OOM: best-effort partial body */
       hcl2_body_free(b);
       return NULL;
     }
     lex(l); /* token after the name decides attribute vs block */
     /* parse_attr / parse_block take ownership of `name` on every path. */
-    bool ok = (l->tok == T_ASSIGN) ? parse_attr(p, b, name) : parse_block(p, b, name);
+    bool ok = (l->tok == T_ASSIGN) ? parse_attr(p, b, name) : parse_block(p, b, name, dg);
     if (!ok) {
+      if (dg != NULL) { /* record the error, recover at the next line, continue */
+        diags_add(dg, l->err);
+        l->err[0] = '\0';
+        resync(p);
+        continue;
+      }
       hcl2_body_free(b);
       return NULL;
     }
@@ -173,7 +233,7 @@ hcl2_doc *hcl2_parse(const char *src, size_t len, char *err, size_t errsz) {
   p.lx.err = err;
   p.lx.errsz = errsz;
   lex(&p.lx);
-  struct hcl2_body *root = parse_body(&p, true);
+  struct hcl2_body *root = parse_body(&p, true, NULL);
   free(p.lx.text);
   if (root == NULL) {
     everr(err, errsz, "parse error");
@@ -186,6 +246,47 @@ hcl2_doc *hcl2_parse(const char *src, size_t len, char *err, size_t errsz) {
   }
   doc->root = root;
   return doc;
+}
+
+hcl2_doc *hcl2_parse_diags(const char *src, size_t len, hcl2_diags **out) {
+  hcl2_diags *dg = calloc(1, sizeof(*dg));
+  if (out != NULL)
+    *out = dg;
+  if (dg == NULL)
+    return NULL;
+  struct parser p = {0};
+  char ebuf[256] = "";
+  p.lx.p = src;
+  p.lx.end = src + len;
+  p.lx.start = src;
+  p.lx.tokpos = src;
+  p.lx.err = ebuf;
+  p.lx.errsz = sizeof(ebuf);
+  lex(&p.lx);
+  struct hcl2_body *root = parse_body(&p, true, dg); /* recovers at each line */
+  free(p.lx.text);
+  if (root == NULL)
+    return NULL; /* only on allocation failure */
+  hcl2_doc *doc = calloc(1, sizeof(*doc));
+  if (doc == NULL) {
+    hcl2_body_free(root);
+    return NULL;
+  }
+  doc->root = root;
+  return doc;
+}
+
+size_t hcl2_diags_count(const hcl2_diags *d) { return d ? d->n : 0; }
+const char *hcl2_diags_msg(const hcl2_diags *d, size_t i) {
+  return (d != NULL && i < d->n) ? d->msgs[i] : NULL;
+}
+void hcl2_diags_free(hcl2_diags *d) {
+  if (d == NULL)
+    return;
+  for (size_t i = 0; i < d->n; i++)
+    free(d->msgs[i]);
+  free(d->msgs);
+  free(d);
 }
 
 void hcl2_doc_free(hcl2_doc *doc) {

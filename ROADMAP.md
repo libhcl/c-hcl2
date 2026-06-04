@@ -58,10 +58,12 @@ this is built milestone by milestone.
   unknown. *Not yet:* type-tracked unknowns (the unknown here is fully dynamic).
 - ⬜ richer numbers (big.Float semantics) instead of `double`
 - 🟡 source-range diagnostics: both syntax (lex/parse) **and** semantic/eval
-  errors now report `at line L, column C`. AST nodes carry the position
-  (computed at parse time), so eval errors are located even for **deferred body
-  decoding**, after the source buffer is gone. *Not yet:* full ranges (spans,
-  not just a start point) and collecting multiple errors per parse.
+  errors report `at line L, column C`. AST nodes carry the position (computed at
+  parse time), so eval errors are located even for **deferred body decoding**,
+  after the source buffer is gone. **Multi-error collection done**:
+  `hcl2_parse_diags` recovers at the next line and gathers all body-level
+  errors into a `hcl2_diags` list (a best-effort partial document is still
+  returned). *Not yet:* full ranges (start+end spans, not just a start point).
 
 ## M5 — HCL JSON profile (started)
 

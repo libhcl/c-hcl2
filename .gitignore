@@ -1,6 +1,8 @@
 *.o
 *.a
 /test/hcl2_test
+/test/fuzz
+/test/fuzz_dbg
 *.profraw
 *.profdata
 *.dSYM/

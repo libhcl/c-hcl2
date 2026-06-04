@@ -303,6 +303,7 @@ void lex(struct lexer *l) {
       l->tok = T_AND;
       return;
     }
+    l->p++; /* consume the byte so re-lexing makes progress (error recovery) */
     l->tok = T_ERR;
     lx_err(l, "unexpected '&'");
     return;
@@ -312,6 +313,7 @@ void lex(struct lexer *l) {
       l->tok = T_OR;
       return;
     }
+    l->p++; /* consume the byte so re-lexing makes progress (error recovery) */
     l->tok = T_ERR;
     lx_err(l, "unexpected '|'");
     return;
@@ -404,6 +406,7 @@ void lex(struct lexer *l) {
     l->tok = T_IDENT;
     return;
   }
+  l->p++; /* consume the byte so re-lexing makes progress (error recovery) */
   l->tok = T_ERR;
   lx_err(l, "invalid character");
 }
