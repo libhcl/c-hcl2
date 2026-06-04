@@ -102,6 +102,14 @@ int main(int argc, char **argv) {
   if (S == 0)
     S = 1;
 
+  /* a small schema to drive the JSON body decoder on arbitrary input */
+  hcl2_schema *sch = hcl2_schema_new();
+  hcl2_schema *child = hcl2_schema_new();
+  hcl2_schema_attr(child, "port", false);
+  hcl2_schema_attr(sch, "name", false);
+  hcl2_schema_attr(sch, "tags", false);
+  hcl2_schema_block(sch, "service", 1, child);
+
   for (long i = 0; i < iters; i++) {
     size_t len;
     char *buf = gen(&len);
@@ -126,8 +134,12 @@ int main(int argc, char **argv) {
     hcl2_diags_free(dg);
     hcl2_doc_free(dd);
 
+    hcl2_doc *jb = hcl2_json_decode(buf, len, sch, err, sizeof(err)); /* JSON body profile */
+    hcl2_doc_free(jb);
+
     free(buf);
   }
+  hcl2_schema_free(sch);
   fprintf(stderr, "fuzz: %ld iterations, seed end-state 0x%08x, no crash.\n", iters, S);
   return 0;
 }

@@ -49,6 +49,9 @@ typedef enum {
 typedef struct hcl2_value hcl2_value;
 typedef struct hcl2_ctx hcl2_ctx;
 typedef struct hcl2_type hcl2_type;
+typedef struct hcl2_doc hcl2_doc;
+typedef struct hcl2_body hcl2_body;
+typedef struct hcl2_block hcl2_block;
 
 /* --- value constructors (caller owns the result; free with hcl2_value_free) --- */
 hcl2_value *hcl2_null(void);
@@ -141,11 +144,42 @@ hcl2_value *hcl2_parse_json(const char *src, size_t len, char *err, size_t errsz
  * string is interpreted as an HCL template and evaluated against `ctx`, so
  * "${var}" / "%{ if c }..%{ endif }" expand (backslashes stay literal -- JSON
  * already did its own un-escaping). Objects -> object, arrays -> tuple, and
- * numbers/bools/null map directly. Returns an owned value, or NULL on error.
- * (This is the JSON profile's expression decoding; the schema-driven body
- * profile -- attribute-vs-block resolution -- is still future work, see
- * ROADMAP.md.) */
+ * numbers/bools/null map directly. Returns an owned value, or NULL on error. */
 hcl2_value *hcl2_json_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, size_t errsz);
+
+/* --- JSON body profile (M5): schema-driven attribute-vs-block decoding ---
+ *
+ * In HCL's JSON profile a JSON object is a *body*, but JSON alone cannot tell an
+ * attribute from a block -- that needs a schema. Build one with hcl2_schema_*,
+ * then hcl2_json_decode turns a JSON document into the same hcl2_doc / hcl2_body
+ * tree the native parser produces: attribute values become lazily-evaluated
+ * expressions (JSON strings are templates), so you read them with
+ * hcl2_body_attr_value(..., ctx, ...) exactly as for native HCL.
+ *
+ *   hcl2_schema *blk = hcl2_schema_new();
+ *   hcl2_schema_attr(blk, "port", true);
+ *   hcl2_schema *top = hcl2_schema_new();
+ *   hcl2_schema_block(top, "service", 1, blk);   // 1 label; `top` owns `blk`
+ *   hcl2_doc *d = hcl2_json_decode(src, len, top, err, sizeof err);
+ *   hcl2_schema_free(top);                        // frees the whole tree
+ */
+typedef struct hcl2_schema hcl2_schema;
+hcl2_schema *hcl2_schema_new(void);
+/* Declare an expected attribute (an error if `required` and absent). */
+bool hcl2_schema_attr(hcl2_schema *s, const char *name, bool required);
+/* Declare a block type with `nlabels` labels and a `child` schema for its body
+ * (NULL == an empty body). TAKES OWNERSHIP of `child` (freed by
+ * hcl2_schema_free). */
+bool hcl2_schema_block(hcl2_schema *s, const char *type, size_t nlabels, hcl2_schema *child);
+void hcl2_schema_free(hcl2_schema *s);
+
+/* Decode a JSON document as an HCL body per `schema`. The top-level JSON value
+ * must be an object. Properties are matched to schema attributes/blocks;
+ * unrecognized properties, a missing required attribute, or a block whose JSON
+ * shape does not match its label count are errors. Returns an owned hcl2_doc
+ * (free with hcl2_doc_free), or NULL on error (message in err). */
+hcl2_doc *hcl2_json_decode(const char *src, size_t len, const hcl2_schema *schema, char *err,
+                           size_t errsz);
 
 /* --- configuration bodies (M2) ---
  *
@@ -162,9 +196,6 @@ hcl2_value *hcl2_json_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err
  *   ... hcl2_value_free(port); ...
  *   hcl2_doc_free(doc);
  */
-typedef struct hcl2_doc hcl2_doc;
-typedef struct hcl2_body hcl2_body;
-typedef struct hcl2_block hcl2_block;
 
 /* Parse a whole document body. Returns NULL on error (message in err). */
 hcl2_doc *hcl2_parse(const char *src, size_t len, char *err, size_t errsz);

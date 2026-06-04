@@ -81,10 +81,16 @@ this is built milestone by milestone.
   since JSON already un-escaped). Objects/arrays map to object/tuple of
   evaluated values; unknown interpolations propagate unknown. Reuses the native
   template renderer (`eval_template`, heredoc mode).
-- 🟡 *Not yet:* the schema-driven **body** profile -- using a schema to resolve
-  which JSON properties are attributes vs. (labeled) blocks, so a JSON document
-  can be decoded as an `hcl2_body`. This needs the decode-with-schema work; the
-  value/expression layers above are the pieces it will build on.
+- ✅ schema-driven **body** profile done: `hcl2_json_decode(src, len, schema,
+  ...)` decodes a JSON document into the same `hcl2_doc`/`hcl2_body` tree the
+  native parser builds, using a `hcl2_schema` (`hcl2_schema_new` /
+  `hcl2_schema_attr` / `hcl2_schema_block`) to resolve attributes vs. labeled
+  blocks. Attribute values are synthesized into expression AST nodes (JSON
+  strings -> templates), so they decode **lazily** against a context via
+  `hcl2_body_attr_value`, exactly like native bodies; blocks descend `nlabels`
+  deep (a leaf object is one block, an array is several sharing labels). Missing
+  required attributes, unknown properties, and label-shape mismatches are
+  errors. With this, the JSON profile is complete (value + expression + body).
 
 ## Cross-cutting
 
@@ -124,9 +130,9 @@ by impact:
   operation-produced unknowns
 - ✅ multi-error reporting (`hcl2_parse_diags`) — done. *Still:* full source
   ranges (start+end spans, not just a start point)
-- ✅ JSON profile value + expression/template decoding (`hcl2_parse_json`,
-  `hcl2_json_eval`) — done. *Still:* the schema-driven **body** layer
-  (attribute-vs-block resolution from a schema)
+- ✅ JSON profile — value (`hcl2_parse_json`), expression/template
+  (`hcl2_json_eval`), **and** the schema-driven body layer (`hcl2_json_decode` +
+  `hcl2_schema_*`) — all done
 - ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double` — a
   deliberate scope decision; see below)
 
@@ -140,8 +146,10 @@ by impact:
   need exact decimal arithmetic on very large integers or high-precision
   fractions are out of scope. Revisiting this would mean vendoring or depending
   on a bignum library, which conflicts with the zero-dependency goal.
-- **The remaining true gap to full parity is the JSON profile's schema-driven
-  *body* layer** (decoding a JSON document into an `hcl2_body` by consulting a
-  schema to tell attributes from blocks). The native-syntax surface, the cty
+- **The HCL2 feature surface is now implemented end to end:** native syntax, cty
   value semantics, typed unknowns, conversions, multi-error diagnostics, and the
-  JSON value + expression/template layers are all implemented.
+  full JSON profile (value + expression/template + schema-driven body). The
+  residual items are refinements rather than missing features: full source
+  ranges (start+end spans, currently a start point), eval-level result-type
+  inference onto operation-produced unknowns, chained splats (`xs[*][*]`), and
+  the `big.Float` precision trade-off documented above.

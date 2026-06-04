@@ -176,6 +176,40 @@ static bool oom_scan_jsoneval(const char *s) {
   }
   return false;
 }
+/* OOM scan for the schema-driven JSON body decoder: under each budget, build a
+ * representative schema (labels + nested child + array blocks) and decode a
+ * document, exercising every allocation-failure cleanup arm (schema build, node
+ * synthesis, block label descent, make_block/free_block). */
+static bool oom_scan_json_decode(const char *src) {
+  for (int b = 0; b <= 5000; b++) {
+    hcl2_alloc_budget = b;
+    char err[256] = "";
+    bool ok = false;
+    hcl2_schema *child = hcl2_schema_new();
+    hcl2_schema *top = hcl2_schema_new();
+    bool sb = child != NULL && hcl2_schema_attr(child, "port", true) &&
+              hcl2_schema_attr(child, "host", false);
+    bool tattrs = top != NULL && hcl2_schema_attr(top, "name", true) &&
+                  hcl2_schema_attr(top, "tags", false) && hcl2_schema_attr(top, "meta", false);
+    bool tb = false;
+    if (sb && tattrs)
+      tb = hcl2_schema_block(top, "service", 1, child); /* consumes child */
+    else
+      hcl2_schema_free(child); /* never handed off to top */
+    if (tb) {
+      hcl2_doc *d = hcl2_json_decode(src, strlen(src), top, err, sizeof(err));
+      if (d != NULL) {
+        ok = true;
+        hcl2_doc_free(d);
+      }
+    }
+    hcl2_alloc_budget = -1;
+    hcl2_schema_free(top);
+    if (ok)
+      return true;
+  }
+  return false;
+}
 /* Drive every allocation arm of the multi-error parser, including the
  * diagnostics-list growth and the recovery cleanup paths. parse_diags returns
  * a best-effort document on most budgets (NULL only when the body/doc calloc
@@ -596,6 +630,139 @@ int main(void) {
     check("json_eval unknown interp", vu && hcl2_value_is_unknown(vu));
     hcl2_value_free(vu);
     hcl2_ctx_free(c);
+  }
+  /* M5: JSON body profile -- schema-driven attribute/block decoding */
+  {
+    char err[256] = "";
+    /* schema: attrs name(req)/replicas/enabled/tags/meta; block service[1 label]
+       with child attrs port(req)/host; block feature[0 labels] child attr on */
+    hcl2_schema *child = hcl2_schema_new();
+    hcl2_schema_attr(child, "port", true);
+    hcl2_schema_attr(child, "host", false);
+    hcl2_schema *feat = hcl2_schema_new();
+    hcl2_schema_attr(feat, "on", false);
+    hcl2_schema *top = hcl2_schema_new();
+    hcl2_schema_attr(top, "name", true);
+    hcl2_schema_attr(top, "replicas", false);
+    hcl2_schema_attr(top, "enabled", false);
+    hcl2_schema_attr(top, "tags", false);
+    hcl2_schema_attr(top, "meta", false);
+    hcl2_schema_attr(top, "nil", false);
+    hcl2_schema_block(top, "service", 1, child);
+    hcl2_schema_block(top, "feature", 0, feat);
+
+    const char *src = "{"
+                      "\"name\": \"app-${env}\","
+                      "\"replicas\": 3,"
+                      "\"enabled\": true,"
+                      "\"tags\": [\"a\", \"b-${env}\"],"
+                      "\"meta\": {\"k\": \"v\", \"n\": 2},"
+                      "\"nil\": null,"
+                      "\"service\": {"
+                      "  \"api\": {\"port\": 8080, \"host\": \"h-${env}\"},"
+                      "  \"web\": [{\"port\": 80}, {\"port\": 443}]"
+                      "},"
+                      "\"feature\": {\"on\": false}"
+                      "}";
+    hcl2_doc *doc = hcl2_json_decode(src, strlen(src), top, err, sizeof(err));
+    check("json_decode ok", doc != NULL);
+    const hcl2_body *root = hcl2_doc_root(doc);
+
+    /* attributes are lazily evaluated against a ctx (string -> template) */
+    hcl2_ctx *ctx = hcl2_ctx_new();
+    hcl2_ctx_set_var(ctx, "env", hcl2_string("prod"));
+    check("json_decode attr template",
+          isstr(hcl2_body_attr_value(root, "name", ctx, err, sizeof(err)), "app-prod"));
+    check("json_decode attr number",
+          isnum(hcl2_body_attr_value(root, "replicas", ctx, err, sizeof(err)), 3));
+    check("json_decode attr bool",
+          isbool(hcl2_body_attr_value(root, "enabled", ctx, err, sizeof(err)), true));
+    hcl2_value *tags = hcl2_body_attr_value(root, "tags", ctx, err, sizeof(err));
+    check("json_decode attr array",
+          tags && hcl2_value_len(tags) == 2 && isstr_v(hcl2_value_at(tags, 1), "b-prod"));
+    hcl2_value_free(tags);
+    hcl2_value *meta = hcl2_body_attr_value(root, "meta", ctx, err, sizeof(err));
+    check("json_decode attr object", meta && isstr_v(hcl2_value_get(meta, "k"), "v"));
+    hcl2_value_free(meta);
+    hcl2_value *nil = hcl2_body_attr_value(root, "nil", ctx, err, sizeof(err));
+    check("json_decode attr null", nil && hcl2_value_kind(nil) == HCL2_NULL);
+    hcl2_value_free(nil);
+
+    /* blocks: service has 3 (api + web x2); feature has 1 */
+    check("json_decode block count", hcl2_body_block_count(root, "service") == 3);
+    check("json_decode feature count", hcl2_body_block_count(root, "feature") == 1);
+    const hcl2_block *api = hcl2_body_block_at(root, "service", 0);
+    check("json_decode block label", api && strcmp(hcl2_block_label(api, 0), "api") == 0);
+    check("json_decode nested attr",
+          isnum(hcl2_body_attr_value(hcl2_block_body(api), "port", ctx, err, sizeof(err)), 8080));
+    /* the two web blocks share the label "web" */
+    const hcl2_block *web0 = hcl2_body_block_at(root, "service", 1);
+    const hcl2_block *web1 = hcl2_body_block_at(root, "service", 2);
+    check("json_decode array blocks labels", web0 && web1 &&
+                                                 strcmp(hcl2_block_label(web0, 0), "web") == 0 &&
+                                                 strcmp(hcl2_block_label(web1, 0), "web") == 0);
+    check("json_decode array block bodies",
+          isnum(hcl2_body_attr_value(hcl2_block_body(web1), "port", ctx, err, sizeof(err)), 443));
+    const hcl2_block *feature = hcl2_body_block_at(root, "feature", 0);
+    check("json_decode zero-label block", feature && hcl2_block_label_count(feature) == 0);
+
+    hcl2_ctx_free(ctx);
+    hcl2_doc_free(doc);
+    hcl2_schema_free(top); /* frees child + feat too */
+  }
+  {
+    /* JSON body decode error cases */
+    char err[256] = "";
+    hcl2_schema *s = hcl2_schema_new();
+    hcl2_schema_attr(s, "name", true);
+    hcl2_schema_block(s, "blk", 1, NULL); /* NULL child == empty body */
+    struct {
+      const char *name, *src;
+    } bad[] = {
+        {"jd top not object",        "[1, 2]"                                  },
+        {"jd missing required",      "{\"other\": 1}"                          },
+        {"jd unknown property",      "{\"name\": \"x\", \"bogus\": 1}"         },
+        {"jd labels not object",     "{\"name\": \"x\", \"blk\": 5}"           },
+        {"jd body not object",       "{\"name\": \"x\", \"blk\": {\"L\": 5}}"  },
+        {"jd array elem not object", "{\"name\": \"x\", \"blk\": {\"L\": [1]}}"},
+        {"jd bad json",              "{not json"                               },
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+      check(bad[i].name,
+            hcl2_json_decode(bad[i].src, strlen(bad[i].src), s, err, sizeof(err)) == NULL);
+    /* NULL child schema with an empty body is OK */
+    const char *okempty = "{\"name\": \"x\", \"blk\": {\"L\": {}}}";
+    hcl2_doc *d2 = hcl2_json_decode(okempty, strlen(okempty), s, err, sizeof(err));
+    check("jd empty body ok", d2 != NULL && hcl2_body_block_count(hcl2_doc_root(d2), "blk") == 1);
+    hcl2_doc_free(d2);
+    /* optional attribute simply absent */
+    hcl2_schema *s2 = hcl2_schema_new();
+    hcl2_schema_attr(s2, "name", true);
+    hcl2_schema_attr(s2, "opt", false);
+    const char *noopt = "{\"name\": \"x\"}";
+    hcl2_doc *d3 = hcl2_json_decode(noopt, strlen(noopt), s2, err, sizeof(err));
+    check("jd optional absent ok", d3 != NULL && !hcl2_body_has_attr(hcl2_doc_root(d3), "opt"));
+    hcl2_doc_free(d3);
+    hcl2_schema_free(s2);
+    hcl2_schema_free(s);
+    /* NULL schema decodes only an empty object */
+    const char *empty = "{}";
+    hcl2_doc *d4 = hcl2_json_decode(empty, strlen(empty), NULL, err, sizeof(err));
+    check("jd null schema empty ok", d4 != NULL);
+    hcl2_doc_free(d4);
+    const char *nonempty = "{\"x\": 1}";
+    check("jd null schema nonempty err",
+          hcl2_json_decode(nonempty, strlen(nonempty), NULL, err, sizeof(err)) == NULL);
+    /* defensive NULL-argument guards on the schema API */
+    {
+      hcl2_schema *s3 = hcl2_schema_new();
+      check("schema_attr NULL s", !hcl2_schema_attr(NULL, "x", false));
+      check("schema_attr NULL name", !hcl2_schema_attr(s3, NULL, false));
+      check("schema_block NULL s", !hcl2_schema_block(NULL, "t", 0, hcl2_schema_new()));
+      check("schema_block NULL type", !hcl2_schema_block(s3, NULL, 0, hcl2_schema_new()));
+      hcl2_schema_free(s3);
+    }
+    check("schema_free NULL ok", (hcl2_schema_free(NULL), true));
   }
   {
     char err[256] = "";
@@ -1323,6 +1490,17 @@ int main(void) {
     for (size_t i = 0; i < sizeof(jevals) / sizeof(jevals[0]); i++)
       alje = oom_scan_jsoneval(jevals[i]) && alje;
     check("oom scan: json_eval", alje);
+
+    /* schema-driven body decode: single block, array blocks, nested attrs */
+    const char *jdecs[] = {
+        "{\"name\": \"x-${a}\", \"tags\": [1, \"y\"], \"meta\": {\"k\": 1},"
+        " \"service\": {\"api\": {\"port\": 8080, \"host\": \"h\"}}}",
+        "{\"name\": \"x\", \"service\": {\"w\": [{\"port\": 80}, {\"port\": 443}]}}",
+    };
+    bool aljd = true;
+    for (size_t i = 0; i < sizeof(jdecs) / sizeof(jdecs[0]); i++)
+      aljd = oom_scan_json_decode(jdecs[i]) && aljd;
+    check("oom scan: json_decode", aljd);
 
     /* convert() OOM paths: build inputs with the budget off, then fail each
        allocation inside the conversion until it succeeds. */
