@@ -41,6 +41,11 @@ static bool isbool(hcl2_value *v, bool want) {
   hcl2_value_free(v);
   return ok;
 }
+/* Non-owning string compare for borrowed values (e.g. hcl2_value_get results). */
+static bool isstr_v(const hcl2_value *v, const char *want) {
+  const char *s = hcl2_value_as_string(v);
+  return s && strcmp(s, want) == 0;
+}
 static bool fails(const char *s, hcl2_ctx *ctx) {
   char err[256] = "";
   hcl2_value *v = hcl2_eval(s, strlen(s), ctx, err, sizeof(err));
@@ -141,6 +146,30 @@ static bool oom_scan_json(const char *s) {
     hcl2_value *v = hcl2_parse_json(s, strlen(s), err, sizeof(err));
     hcl2_alloc_budget = -1;
     if (v) {
+      hcl2_value_free(v);
+      return true;
+    }
+  }
+  return false;
+}
+/* OOM scan for the JSON-eval profile (template strings evaluated against a
+ * ctx): drives the per-string template renderer's allocation arms too. */
+static bool oom_scan_jsoneval(const char *s) {
+  for (int b = 0; b <= 5000; b++) {
+    hcl2_alloc_budget = b;
+    hcl2_ctx *c = hcl2_ctx_new();
+    char err[256] = "";
+    hcl2_value *v = NULL;
+    if (c != NULL) {
+      /* binding may itself fail under OOM; that just means fewer vars resolve */
+      hcl2_value *nv = hcl2_number(2);
+      if (nv == NULL || !hcl2_ctx_set_var(c, "a", nv))
+        hcl2_value_free(nv);
+      v = hcl2_json_eval(s, strlen(s), c, err, sizeof(err));
+    }
+    hcl2_alloc_budget = -1;
+    hcl2_ctx_free(c);
+    if (v != NULL) {
       hcl2_value_free(v);
       return true;
     }
@@ -517,18 +546,72 @@ int main(void) {
     hcl2_type_free(t);
   }
   {
+    /* JSON-eval profile: strings are HCL templates evaluated against a ctx. */
+    char err[256] = "";
+    hcl2_ctx *c = hcl2_ctx_new();
+    hcl2_ctx_set_var(c, "name", hcl2_string("ada"));
+    hcl2_ctx_set_var(c, "a", hcl2_number(2));
+    hcl2_ctx_set_var(c, "b", hcl2_number(3));
+    hcl2_ctx_set_var(c, "on", hcl2_bool(true));
+    const char *src = "{\"greet\": \"hi ${name}\", \"sum\": \"${a + b}\", "
+                      "\"lit\": 42, \"flag\": true, \"none\": null, "
+                      "\"arr\": [\"${name}\", 1], \"nest\": {\"k\": \"v${a}\"}, "
+                      "\"cond\": \"%{ if on }yes%{ else }no%{ endif }\"}";
+    hcl2_value *v = hcl2_json_eval(src, strlen(src), c, err, sizeof(err));
+    check("json_eval object", v != NULL && hcl2_value_kind(v) == HCL2_OBJECT);
+    check("json_eval interp", v && isstr_v(hcl2_value_get(v, "greet"), "hi ada"));
+    check("json_eval expr", v && isstr_v(hcl2_value_get(v, "sum"), "5"));
+    check("json_eval number passthrough",
+          v && hcl2_value_kind(hcl2_value_get(v, "lit")) == HCL2_NUMBER);
+    check("json_eval bool passthrough",
+          v && hcl2_value_kind(hcl2_value_get(v, "flag")) == HCL2_BOOL);
+    check("json_eval null passthrough",
+          v && hcl2_value_kind(hcl2_value_get(v, "none")) == HCL2_NULL);
+    const hcl2_value *arr = v ? hcl2_value_get(v, "arr") : NULL;
+    check("json_eval array",
+          arr && hcl2_value_kind(arr) == HCL2_TUPLE && isstr_v(hcl2_value_at(arr, 0), "ada"));
+    const hcl2_value *nest = v ? hcl2_value_get(v, "nest") : NULL;
+    check("json_eval nested", nest && isstr_v(hcl2_value_get(nest, "k"), "v2"));
+    check("json_eval directive", v && isstr_v(hcl2_value_get(v, "cond"), "yes"));
+    hcl2_value_free(v);
+
+    /* backslashes stay literal (JSON already un-escaped); $${ escapes ${ */
+    const char *sb = "\"a\\\\b\""; /* JSON "a\\b" -> a\b -> literal a\b */
+    hcl2_value *vb = hcl2_json_eval(sb, strlen(sb), c, err, sizeof(err));
+    check("json_eval backslash literal", isstr_v(vb, "a\\b"));
+    hcl2_value_free(vb);
+    const char *se = "\"$${x}\""; /* -> literal ${x}, not interpolated */
+    hcl2_value *ve = hcl2_json_eval(se, strlen(se), c, err, sizeof(err));
+    check("json_eval dollar escape", isstr_v(ve, "${x}"));
+    hcl2_value_free(ve);
+
+    /* a broken interpolation is an error */
+    const char *bad = "\"${\"";
+    check("json_eval bad interp", hcl2_json_eval(bad, strlen(bad), c, err, sizeof(err)) == NULL);
+
+    /* unknown var -> unknown result string */
+    hcl2_ctx_set_var(c, "u", hcl2_unknown());
+    const char *su = "\"x=${u}\"";
+    hcl2_value *vu = hcl2_json_eval(su, strlen(su), c, err, sizeof(err));
+    check("json_eval unknown interp", vu && hcl2_value_is_unknown(vu));
+    hcl2_value_free(vu);
+    hcl2_ctx_free(c);
+  }
+  {
     char err[256] = "";
     struct {
       const char *name, *src;
     } bad[] = {
-        {"json err empty",            ""         },
-        {"json err trailing",         "1 2"      },
-        {"json err bad tok",          "}"        },
-        {"json err unterminated str", "\"abc"    },
-        {"json err no colon",         "{\"k\" 1}"},
-        {"json err bad number",       "1.2.3"    },
-        {"json err bad literal",      "tru"      },
-        {"json err open array",       "[1,"      },
+        {"json err empty",            ""                                        },
+        {"json err trailing",         "1 2"                                     },
+        {"json err bad tok",          "}"                                       },
+        {"json err unterminated str", "\"abc"                                   },
+        {"json err no colon",         "{\"k\" 1}"                               },
+        {"json err bad number",       "1.2.3"                                   },
+        {"json err bad literal",      "tru"                                     },
+        {"json err open array",       "[1,"                                     },
+        {"json err number too long",
+         "100000000000000000000000000000000000000000000000000000000000000000000"},
     };
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
       err[0] = '\0';
@@ -1231,6 +1314,15 @@ int main(void) {
     for (size_t i = 0; i < sizeof(jsons) / sizeof(jsons[0]); i++)
       allj = oom_scan_json(jsons[i]) && allj;
     check("oom scan: json", allj);
+
+    const char *jevals[] = {
+        "{\"x\": \"v${a}\", \"y\": [1, \"${a}\"], \"z\": \"lit\"}",
+        "\"%{ if true }${a}%{ endif }\"",
+    };
+    bool alje = true;
+    for (size_t i = 0; i < sizeof(jevals) / sizeof(jevals[0]); i++)
+      alje = oom_scan_jsoneval(jevals[i]) && alje;
+    check("oom scan: json_eval", alje);
 
     /* convert() OOM paths: build inputs with the budget off, then fail each
        allocation inside the conversion until it succeeds. */

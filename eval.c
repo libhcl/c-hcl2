@@ -543,8 +543,7 @@ static void trender(struct trender *t, struct sbuf *s, enum dirstop *stop) {
 /* Evaluate a string template (raw inner bytes). When `heredoc` is true the body
  * is a heredoc: backslash escapes are kept literal (only `${ }` / `$${` and the
  * `%{ }` directives are interpreted), matching HCL's template semantics. */
-static hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *err,
-                                 size_t errsz) {
+hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *err, size_t errsz) {
   struct sbuf s = {0};
   struct trender t = {.p = raw,
                       .end = raw + strlen(raw),

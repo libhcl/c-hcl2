@@ -133,11 +133,19 @@ hcl2_value *hcl2_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, siz
 
 /* --- JSON profile (M5, in progress) ---
  * Parse a JSON document into the value model: object -> object, array -> tuple,
- * string -> string (literal, not yet an HCL template), number -> number,
- * true/false -> bool, null -> null. Returns an owned value, or NULL on error.
- * The schema-driven body profile (attribute vs. block, string templates) is
- * future work; see ROADMAP.md. */
+ * string -> string (literal, NOT an HCL template), number -> number,
+ * true/false -> bool, null -> null. Returns an owned value, or NULL on error. */
 hcl2_value *hcl2_parse_json(const char *src, size_t len, char *err, size_t errsz);
+
+/* Evaluate an HCL JSON-profile document. Like hcl2_parse_json, but each JSON
+ * string is interpreted as an HCL template and evaluated against `ctx`, so
+ * "${var}" / "%{ if c }..%{ endif }" expand (backslashes stay literal -- JSON
+ * already did its own un-escaping). Objects -> object, arrays -> tuple, and
+ * numbers/bools/null map directly. Returns an owned value, or NULL on error.
+ * (This is the JSON profile's expression decoding; the schema-driven body
+ * profile -- attribute-vs-block resolution -- is still future work, see
+ * ROADMAP.md.) */
+hcl2_value *hcl2_json_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, size_t errsz);
 
 /* --- configuration bodies (M2) ---
  *

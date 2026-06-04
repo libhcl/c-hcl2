@@ -24,6 +24,8 @@ struct jp {
   const char *p, *end;
   char *err;
   size_t errsz;
+  hcl2_ctx *ctx; /* template-eval profile only (hcl2_json_eval) */
+  bool tmpl;     /* when true, JSON strings are evaluated as HCL templates */
 };
 
 static void jerr(struct jp *j, const char *m) {
@@ -136,7 +138,10 @@ static hcl2_value *jstring(struct jp *j) {
   char *s = jstring_raw(j);
   if (s == NULL)
     return NULL;
-  hcl2_value *v = hcl2_string(s);
+  /* JSON profile: a string is a literal. JSON-eval profile: it is an HCL
+   * template (heredoc mode -- JSON already un-escaped, so backslashes stay
+   * literal and only ${ } / %{ } are interpreted). */
+  hcl2_value *v = j->tmpl ? eval_template(s, true, j->ctx, j->err, j->errsz) : hcl2_string(s);
   free(s);
   return v;
 }
@@ -281,18 +286,29 @@ static hcl2_value *jvalue(struct jp *j) {
   }
 }
 
-hcl2_value *hcl2_parse_json(const char *src, size_t len, char *err, size_t errsz) {
-  if (err != NULL && errsz > 0)
-    err[0] = '\0';
-  struct jp j = {.p = src, .end = src + len, .err = err, .errsz = errsz};
-  hcl2_value *v = jvalue(&j);
+static hcl2_value *json_run(struct jp *j) {
+  hcl2_value *v = jvalue(j);
   if (v == NULL)
     return NULL;
-  jws(&j);
-  if (j.p != j.end) {
-    jerr(&j, "trailing content after JSON value");
+  jws(j);
+  if (j->p != j->end) {
+    jerr(j, "trailing content after JSON value");
     hcl2_value_free(v);
     return NULL;
   }
   return v;
+}
+
+hcl2_value *hcl2_parse_json(const char *src, size_t len, char *err, size_t errsz) {
+  if (err != NULL && errsz > 0)
+    err[0] = '\0';
+  struct jp j = {.p = src, .end = src + len, .err = err, .errsz = errsz};
+  return json_run(&j);
+}
+
+hcl2_value *hcl2_json_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, size_t errsz) {
+  if (err != NULL && errsz > 0)
+    err[0] = '\0';
+  struct jp j = {.p = src, .end = src + len, .err = err, .errsz = errsz, .ctx = ctx, .tmpl = true};
+  return json_run(&j);
 }

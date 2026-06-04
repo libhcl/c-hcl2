@@ -43,6 +43,12 @@ hcl2_func builtin_func(const char *name);
 /* error reporter (defined in eval.c, used by the builtins in value.c too) */
 void everr(char *err, size_t errsz, const char *m);
 
+/* Evaluate a raw template string (defined in eval.c). With heredoc=true the
+ * backslash escapes are kept literal and only ${ } / %{ } (and $${ / %%{) are
+ * interpreted -- which is exactly the HCL JSON profile's template semantics,
+ * since JSON has already processed its own escapes. Used by json.c. */
+hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *err, size_t errsz);
+
 /* --- lexer (lexer.c) --- */
 enum tok {
   T_EOF,

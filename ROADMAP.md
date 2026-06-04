@@ -73,10 +73,18 @@ this is built milestone by milestone.
 
 ## M5 — HCL JSON profile (started)
 
-- 🟡 value layer done: `hcl2_parse_json` parses a JSON document into the value
-  model (object/array/string/number/bool/null, with `\uXXXX` -> UTF-8). *Not
-  yet:* the schema-driven body profile (attribute-vs-block resolution, JSON
-  strings decoded as HCL templates), which needs the decode-with-schema work.
+- ✅ value layer done: `hcl2_parse_json` parses a JSON document into the value
+  model (object/array/string/number/bool/null, with `\uXXXX` -> UTF-8).
+- ✅ expression/template decoding done: `hcl2_json_eval` evaluates a JSON
+  document where each JSON string is an HCL template (so `"${var}"` and
+  `"%{ if c }..%{ endif }"` expand against a context; backslashes stay literal
+  since JSON already un-escaped). Objects/arrays map to object/tuple of
+  evaluated values; unknown interpolations propagate unknown. Reuses the native
+  template renderer (`eval_template`, heredoc mode).
+- 🟡 *Not yet:* the schema-driven **body** profile -- using a schema to resolve
+  which JSON properties are attributes vs. (labeled) blocks, so a JSON document
+  can be decoded as an `hcl2_body`. This needs the decode-with-schema work; the
+  value/expression layers above are the pieces it will build on.
 
 ## Cross-cutting
 
@@ -114,6 +122,26 @@ by impact:
 - ✅ type-tracked (typed) unknowns — done (`hcl2_unknown_of` / `hcl2_unknown_type`;
   `hcl2_convert` refines). *Still:* eval-level inference of result types onto
   operation-produced unknowns
-- ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double`)
-- ⬜ full source ranges (start+end spans) and multi-error reporting
-- ⬜ the JSON profile's schema-driven body layer
+- ✅ multi-error reporting (`hcl2_parse_diags`) — done. *Still:* full source
+  ranges (start+end spans, not just a start point)
+- ✅ JSON profile value + expression/template decoding (`hcl2_parse_json`,
+  `hcl2_json_eval`) — done. *Still:* the schema-driven **body** layer
+  (attribute-vs-block resolution from a schema)
+- ⬜ arbitrary-precision numbers (cty uses big.Float; we use `double` — a
+  deliberate scope decision; see below)
+
+## Deliberate scope decisions
+
+- **Numbers are IEEE-754 `double`, not arbitrary-precision `big.Float`.** cty
+  models numbers as arbitrary-precision decimals; c-hcl2 uses `double`. This is
+  a conscious trade-off: a `double` carries ~15-17 significant decimal digits,
+  which covers configuration values (ports, counts, ratios, timeouts) with room
+  to spare, and keeps the value model dependency-free and fast. Programs that
+  need exact decimal arithmetic on very large integers or high-precision
+  fractions are out of scope. Revisiting this would mean vendoring or depending
+  on a bignum library, which conflicts with the zero-dependency goal.
+- **The remaining true gap to full parity is the JSON profile's schema-driven
+  *body* layer** (decoding a JSON document into an `hcl2_body` by consulting a
+  schema to tell attributes from blocks). The native-syntax surface, the cty
+  value semantics, typed unknowns, conversions, multi-error diagnostics, and the
+  JSON value + expression/template layers are all implemented.

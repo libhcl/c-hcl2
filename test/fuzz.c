@@ -118,6 +118,9 @@ int main(int argc, char **argv) {
     hcl2_value *jv = hcl2_parse_json(buf, len, err, sizeof(err));
     hcl2_value_free(jv);
 
+    hcl2_value *je = hcl2_json_eval(buf, len, NULL, err, sizeof(err)); /* template profile */
+    hcl2_value_free(je);
+
     hcl2_diags *dg = NULL; /* exercises the error-recovery paths */
     hcl2_doc *dd = hcl2_parse_diags(buf, len, &dg);
     hcl2_diags_free(dg);
