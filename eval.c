@@ -565,9 +565,9 @@ hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *er
     free(s.p);
     return NULL;
   }
-  if (t.unknown) { /* an interpolated/conditional unknown makes the result unknown */
+  if (t.unknown) { /* an unknown interpolation makes the result an unknown string */
     free(s.p);
-    return hcl2_unknown();
+    return hcl2_unknown_of(hcl2_type_string());
   }
   hcl2_value *v = hcl2_string(s.p ? s.p : "");
   free(s.p);
@@ -577,8 +577,22 @@ hcl2_value *eval_template(const char *raw, bool heredoc, hcl2_ctx *ctx, char *er
 static hcl2_value *eval_binary(enum tok op, hcl2_value *l, hcl2_value *r, char *err, size_t errsz,
                                int line, int col) {
   hcl2_value *res = NULL;
-  if (is_unknown(l) || is_unknown(r)) { /* unknown propagates through operators */
-    res = hcl2_unknown();
+  if (is_unknown(l) || is_unknown(r)) {
+    /* unknown propagates, but we can infer the result type from the operator:
+       arithmetic yields a number, every other operator (==, !=, &&, ||, and the
+       ordered comparisons) yields a bool. */
+    switch (op) {
+    case T_PLUS:
+    case T_MINUS:
+    case T_STAR:
+    case T_SLASH:
+    case T_PCT:
+      res = hcl2_unknown_of(hcl2_type_number());
+      break;
+    default:
+      res = hcl2_unknown_of(hcl2_type_bool());
+      break;
+    }
     goto done;
   }
   if (op == T_EQ || op == T_NE) {
@@ -877,8 +891,9 @@ hcl2_value *hcl2_eval_node(const struct node *x, hcl2_ctx *ctx, char *err, size_
     if (e == NULL)
       return NULL;
     if (is_unknown(e)) {
+      /* infer the result type: !x is bool, -x is number */
       hcl2_value_free(e);
-      return hcl2_unknown();
+      return hcl2_unknown_of(x->op == T_NOT ? hcl2_type_bool() : hcl2_type_number());
     }
     hcl2_value *res = NULL;
     if (x->op == T_MINUS && e->kind == HCL2_NUMBER)

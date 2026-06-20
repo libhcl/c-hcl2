@@ -4,7 +4,9 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "hcl2.h"
 
@@ -371,6 +373,58 @@ int main(void) {
     hcl2_doc_free(d);
   }
 
+  /* full source spans via hcl2_expr_span (end is exclusive: past last token) */
+  {
+    int sl, sc, el, ec;
+    char serr[128];
+    check("span literal", hcl2_expr_span("42", 2, &sl, &sc, &el, &ec, serr, sizeof serr) &&
+                              sl == 1 && sc == 1 && el == 1 && ec == 3);
+    check("span call", hcl2_expr_span("foo(1, 2)", 9, &sl, &sc, &el, &ec, serr, sizeof serr) &&
+                           sl == 1 && sc == 1 && el == 1 && ec == 10);
+    check("span tuple", hcl2_expr_span("[1, 2, 3]", 9, &sl, &sc, &el, &ec, serr, sizeof serr) &&
+                            sl == 1 && sc == 1 && el == 1 && ec == 10);
+    const char *ml = "[\n  1,\n  2\n]";
+    check("span multiline", hcl2_expr_span(ml, strlen(ml), &sl, &sc, &el, &ec, serr, sizeof serr) &&
+                                sl == 1 && sc == 1 && el == 4 && ec == 2);
+    check("span binary end",
+          hcl2_expr_span("1 + 22", 6, &sl, &sc, &el, &ec, serr, sizeof serr) && el == 1 && ec == 7);
+    check("span parse err", !hcl2_expr_span("1 +", 3, &sl, &sc, &el, &ec, serr, sizeof serr));
+    check("span trailing err", !hcl2_expr_span("1 2", 3, &sl, &sc, &el, &ec, serr, sizeof serr));
+    check("span null outptrs", hcl2_expr_span("7", 1, NULL, NULL, NULL, NULL, serr, sizeof serr));
+  }
+
+  /* eval-level unknown-type inference: operations on an unknown yield a typed
+     unknown (singleton types compared by pointer identity) */
+  {
+    hcl2_ctx *c = hcl2_ctx_new();
+    hcl2_ctx_set_var(c, "u", hcl2_unknown());
+    char uerr[128];
+    hcl2_value *v;
+    v = hcl2_eval("u + 1", 5, c, uerr, sizeof uerr);
+    check("unk arith -> number", v != NULL && hcl2_unknown_type(v) == hcl2_type_number());
+    hcl2_value_free(v);
+    v = hcl2_eval("u > 1", 5, c, uerr, sizeof uerr);
+    check("unk compare -> bool", v != NULL && hcl2_unknown_type(v) == hcl2_type_bool());
+    hcl2_value_free(v);
+    v = hcl2_eval("u == 3", 6, c, uerr, sizeof uerr);
+    check("unk eq -> bool", v != NULL && hcl2_unknown_type(v) == hcl2_type_bool());
+    hcl2_value_free(v);
+    v = hcl2_eval("!u", 2, c, uerr, sizeof uerr);
+    check("unk not -> bool", v != NULL && hcl2_unknown_type(v) == hcl2_type_bool());
+    hcl2_value_free(v);
+    v = hcl2_eval("-u", 2, c, uerr, sizeof uerr);
+    check("unk neg -> number", v != NULL && hcl2_unknown_type(v) == hcl2_type_number());
+    hcl2_value_free(v);
+    v = hcl2_eval("\"x${u}y\"", 8, c, uerr, sizeof uerr);
+    check("unk template -> string", v != NULL && hcl2_unknown_type(v) == hcl2_type_string());
+    hcl2_value_free(v);
+    /* where the element type cannot be inferred, the unknown stays dynamic */
+    v = hcl2_eval("u[0]", 4, c, uerr, sizeof uerr);
+    check("unk index -> dynamic", v != NULL && hcl2_unknown_type(v) == hcl2_type_any());
+    hcl2_value_free(v);
+    hcl2_ctx_free(c);
+  }
+
   /* try() / can() special forms */
   check("try first ok", isnum(ev("try(1 + 1)", NULL), 2));
   check("try fallback", isnum(ev("try(nope, 42)", NULL), 42));
@@ -404,6 +458,386 @@ int main(void) {
   check("bi abs", isnum(ev("abs(-5)", NULL), 5));
   check("bi floor", isnum(ev("floor(2.9)", NULL), 2));
   check("bi ceil", isnum(ev("ceil(2.1)", NULL), 3));
+  /* numeric functions (Terraform / go-cty stdlib vectors) */
+  check("bi signum neg", isnum(ev("signum(-13)", NULL), -1));
+  check("bi signum zero", isnum(ev("signum(0)", NULL), 0));
+  check("bi signum pos", isnum(ev("signum(13)", NULL), 1));
+  check("bi log 2", isnum(ev("log(8, 2)", NULL), 3));
+  check("bi log 10", isnum(ev("log(100, 10)", NULL), 2));
+  check("bi pow", isnum(ev("pow(3, 2)", NULL), 9));
+  check("bi pow zero", isnum(ev("pow(4, 0)", NULL), 1));
+  check("bi parseint dec", isnum(ev("parseint(\"100\", 10)", NULL), 100));
+  check("bi parseint hex", isnum(ev("parseint(\"FF\", 16)", NULL), 255));
+  check("bi parseint neg", isnum(ev("parseint(\"-10\", 2)", NULL), -2));
+  check("bi parseint b62", isnum(ev("parseint(\"Z\", 62)", NULL), 61));
+  check("bi parseint bad", ev("parseint(\"12\", 2)", NULL) == NULL);
+  /* string functions (Terraform vectors) */
+  check("bi chomp", isstr(ev("chomp(\"hello\\n\")", NULL), "hello"));
+  check("bi chomp crlf", isstr(ev("chomp(\"hi\\r\\n\")", NULL), "hi"));
+  check("bi trimspace", isstr(ev("trimspace(\"  hi  \")", NULL), "hi"));
+  check("bi trim", isstr(ev("trim(\"?!hello?!\", \"!?\")", NULL), "hello"));
+  check("bi trimprefix", isstr(ev("trimprefix(\"helloworld\", \"hello\")", NULL), "world"));
+  check("bi trimprefix miss", isstr(ev("trimprefix(\"helloworld\", \"x\")", NULL), "helloworld"));
+  check("bi trimsuffix", isstr(ev("trimsuffix(\"helloworld\", \"world\")", NULL), "hello"));
+  check("bi startswith yes", isbool(ev("startswith(\"hello\", \"he\")", NULL), true));
+  check("bi startswith no", isbool(ev("startswith(\"hello\", \"lo\")", NULL), false));
+  check("bi endswith yes", isbool(ev("endswith(\"hello\", \"lo\")", NULL), true));
+  check("bi indent", isstr(ev("indent(2, \"a\\nb\")", NULL), "a\n  b"));
+  /* UTF-8-aware string functions (Terraform vectors) */
+  check("bi substr", isstr(ev("substr(\"hello world\", 1, 4)", NULL), "ello"));
+  check("bi substr neg", isstr(ev("substr(\"hello world\", -5, -1)", NULL), "world"));
+  check("bi substr toend", isstr(ev("substr(\"hello\", 2, -1)", NULL), "llo"));
+  check("bi strrev", isstr(ev("strrev(\"hello\")", NULL), "olleh"));
+  check("bi title", isstr(ev("title(\"hello world\")", NULL), "Hello World"));
+  check("bi replace", isstr(ev("replace(\"1 + 2 + 3\", \"+\", \"-\")", NULL), "1 - 2 - 3"));
+  check("bi replace none", isstr(ev("replace(\"abc\", \"x\", \"y\")", NULL), "abc"));
+  check("bi length unicode", isnum(ev("length(\"héllo\")", NULL), 5));
+  check("bi strrev unicode", isstr(ev("strrev(\"abé\")", NULL), "éba"));
+  /* collection functions (Terraform vectors) */
+  check("bi element", isnum(ev("element([\"a\", \"b\", \"c\"], 1) == \"b\" ? 1 : 0", NULL), 1));
+  check("bi element wrap", isstr(ev("element([\"a\", \"b\"], 3)", NULL), "b"));
+  check("bi slice",
+        isstr(ev("join(\",\", slice([\"a\", \"b\", \"c\", \"d\"], 1, 3))", NULL), "b,c"));
+  check("bi reverse", isstr(ev("join(\",\", reverse([\"a\", \"b\", \"c\"]))", NULL), "c,b,a"));
+  check("bi sum", isnum(ev("sum([1, 2, 3, 4])", NULL), 10));
+  check("bi range n", isstr(ev("join(\",\", [for x in range(3) : tostring(x)])", NULL), "0,1,2"));
+  check("bi range start",
+        isstr(ev("join(\",\", [for x in range(1, 4) : tostring(x)])", NULL), "1,2,3"));
+  check("bi range step",
+        isstr(ev("join(\",\", [for x in range(1, 8, 2) : tostring(x)])", NULL), "1,3,5,7"));
+  check("bi range down",
+        isstr(ev("join(\",\", [for x in range(3, 0, -1) : tostring(x)])", NULL), "3,2,1"));
+  check("bi sort", isstr(ev("join(\",\", sort([\"c\", \"a\", \"b\"]))", NULL), "a,b,c"));
+  check("bi distinct", isnum(ev("length(distinct([1, 2, 2, 3, 3, 3]))", NULL), 3));
+  check("bi compact", isstr(ev("join(\",\", compact([\"a\", \"\", \"b\"]))", NULL), "a,b"));
+  check("bi flatten", isnum(ev("length(flatten([[1, 2], [3], [[4, 5]]]))", NULL), 5));
+  check("bi index", isnum(ev("index([\"a\", \"b\", \"c\"], \"c\")", NULL), 2));
+  check("bi index miss", ev("index([\"a\"], \"z\")", NULL) == NULL);
+  check("bi one", isnum(ev("one([42])", NULL), 42));
+  check("bi one many", ev("one([1, 2])", NULL) == NULL);
+  check("bi alltrue", isbool(ev("alltrue([true, true, true])", NULL), true));
+  check("bi alltrue no", isbool(ev("alltrue([true, false])", NULL), false));
+  check("bi anytrue", isbool(ev("anytrue([false, true])", NULL), true));
+  check("bi coalescelist", isnum(ev("length(coalescelist([], [1, 2, 3]))", NULL), 3));
+  /* map / object functions (Terraform vectors) */
+  check("bi merge", isnum(ev("merge({a = 1, b = 2}, {b = 3, c = 4}).b", NULL), 3));
+  check("bi merge len", isnum(ev("length(keys(merge({a = 1}, {b = 2}, {c = 3})))", NULL), 3));
+  check("bi zipmap", isnum(ev("zipmap([\"a\", \"b\"], [1, 2]).b", NULL), 2));
+  check("bi chunklist", isnum(ev("length(chunklist([1, 2, 3, 4, 5], 2))", NULL), 3));
+  check("bi chunklist inner", isnum(ev("length(chunklist([1, 2, 3, 4, 5], 2)[0])", NULL), 2));
+  check("bi matchkeys",
+        isstr(ev("join(\",\", matchkeys([\"a\", \"b\", \"c\"], [1, 2, 3], [1, 3]))", NULL), "a,c"));
+  /* conversion + set operations (Terraform vectors) */
+  check("bi tolist", isnum(ev("length(tolist([1, 2, 3]))", NULL), 3));
+  check("bi toset dedup", isnum(ev("length(toset([1, 1, 2, 2, 3]))", NULL), 3));
+  check("bi tomap", isnum(ev("tomap({a = 1, b = 2}).b", NULL), 2));
+  check("bi setunion", isnum(ev("length(setunion([1, 2], [2, 3], [3, 4]))", NULL), 4));
+  check("bi setintersection", isnum(ev("length(setintersection([1, 2, 3], [2, 3, 4]))", NULL), 2));
+  check("bi setsubtract", isnum(ev("length(setsubtract([1, 2, 3], [2]))", NULL), 2));
+  check("bi setproduct", isnum(ev("length(setproduct([\"a\", \"b\"], [1, 2, 3]))", NULL), 6));
+  check("bi setproduct inner",
+        isstr(ev("setproduct([\"a\", \"b\"], [\"x\", \"y\"])[0][0]", NULL), "a"));
+  check("bi transpose",
+        isstr(ev("join(\",\", transpose({a = [\"a\", \"b\"], b = [\"b\", \"c\"]})[\"b\"])", NULL),
+              "a,b"));
+  /* format / formatlist / csvdecode (Terraform vectors) */
+  check("bi format s", isstr(ev("format(\"Hello, %s!\", \"world\")", NULL), "Hello, world!"));
+  check("bi format d", isstr(ev("format(\"%d apples\", 5)", NULL), "5 apples"));
+  check("bi format f", isstr(ev("format(\"%.2f\", 3.14159)", NULL), "3.14"));
+  check("bi format pad", isstr(ev("format(\"%05d\", 42)", NULL), "00042"));
+  check("bi format v", isstr(ev("format(\"%v-%v-%v\", 1, true, \"x\")", NULL), "1-true-x"));
+  check("bi format q", isstr(ev("format(\"%q\", \"hi\")", NULL), "\"hi\""));
+  check("bi format idx", isstr(ev("format(\"%[2]s %[1]s\", \"a\", \"b\")", NULL), "b a"));
+  check("bi format pct", isstr(ev("format(\"100%%\")", NULL), "100%"));
+  check("bi format hex", isstr(ev("format(\"%x\", 255)", NULL), "ff"));
+  check("bi formatlist",
+        isstr(ev("join(\",\", formatlist(\"%s=%d\", [\"a\", \"b\"], [1, 2]))", NULL), "a=1,b=2"));
+  check("bi formatlist scalar",
+        isstr(ev("join(\",\", formatlist(\"%s-%s\", \"x\", [\"a\", \"b\"]))", NULL), "x-a,x-b"));
+  check("bi csvdecode len", isnum(ev("length(csvdecode(\"a,b\\n1,2\\n3,4\"))", NULL), 2));
+  check("bi csvdecode field", isstr(ev("csvdecode(\"a,b\\n1,2\")[0][\"b\"]", NULL), "2"));
+  check("bi csvdecode quoted", isstr(ev("csvdecode(\"a\\n\\\"x,y\\\"\")[0][\"a\"]", NULL), "x,y"));
+  /* regex / regexall / regex-replace (Terraform vectors) */
+  check("bi regex whole", isstr(ev("regex(\"[a-z]+\", \"abc123\")", NULL), "abc"));
+  check("bi regex group", isstr(ev("regex(\"([0-9]+)x([0-9]+)\", \"3x4\")[1]", NULL), "4"));
+  check("bi regex named",
+        isstr(ev("regex(\"(?P<y>[0-9]{4})-(?P<m>[0-9]{2})\", \"2026-06\")[\"m\"]", NULL), "06"));
+  check("bi regex escd", isstr(ev("regex(\"\\\\d+\", \"x12y\")", NULL), "12"));
+  check("bi regex anchor alt", isstr(ev("regex(\"^(?:cat|dog)$\", \"dog\")", NULL), "dog"));
+  check("bi regex grp alt", isstr(ev("regex(\"^(cat|dog)$\", \"dog\")[0]", NULL), "dog"));
+  check("bi regex repeat", isstr(ev("regex(\"a{2,3}\", \"aaaa\")", NULL), "aaa"));
+  check("bi regex nomatch", ev("regex(\"z+\", \"abc\")", NULL) == NULL);
+  check("bi regexall len", isnum(ev("length(regexall(\"[a-z]+\", \"a1b2c\"))", NULL), 3));
+  check("bi regexall last", isstr(ev("regexall(\"[a-z]+\", \"a1b2c\")[2]", NULL), "c"));
+  check("bi replace regex", isstr(ev("replace(\"foobar\", \"/o+/\", \"0\")", NULL), "f0bar"));
+  check("bi replace regex grp",
+        isstr(ev("replace(\"2026-06\", \"/([0-9]+)-([0-9]+)/\", \"$2/$1\")", NULL), "06/2026"));
+  /* crypto / encoding (standard vectors) */
+  check("bi base64encode", isstr(ev("base64encode(\"Hello World\")", NULL), "SGVsbG8gV29ybGQ="));
+  check("bi base64decode", isstr(ev("base64decode(\"SGVsbG8gV29ybGQ=\")", NULL), "Hello World"));
+  check("bi base64 round",
+        isstr(ev("base64decode(base64encode(\"round-trip!\"))", NULL), "round-trip!"));
+  check("bi md5", isstr(ev("md5(\"abc\")", NULL), "900150983cd24fb0d6963f7d28e17f72"));
+  check("bi sha1", isstr(ev("sha1(\"abc\")", NULL), "a9993e364706816aba3e25717850c26c9cd0d89d"));
+  check("bi sha256", isstr(ev("sha256(\"abc\")", NULL),
+                           "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+  check("bi sha512", isstr(ev("sha512(\"abc\")", NULL),
+                           "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
+                           "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"));
+  check("bi base64sha256",
+        isstr(ev("base64sha256(\"abc\")", NULL), "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="));
+  check("bi uuidv5 dns", isstr(ev("uuidv5(\"dns\", \"example.com\")", NULL),
+                               "cfbff0d1-9375-5685-968c-48ce8b15ae17"));
+  /* uuid() is random: validate its v4 format with the regex engine */
+  check("bi uuid format", isbool(ev("can(regex(\"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-"
+                                    "f]{3}-[0-9a-f]{12}$\", uuid())) "
+                                    "&& uuid() != uuid()",
+                                    NULL),
+                                 true));
+  /* cidr* — Terraform vectors (IPv4 + IPv6) */
+  check("bi cidrhost v4", isstr(ev("cidrhost(\"10.12.127.0/20\", 16)", NULL), "10.12.112.16"));
+  check("bi cidrhost v4 b", isstr(ev("cidrhost(\"10.12.127.0/20\", 268)", NULL), "10.12.113.12"));
+  check("bi cidrhost v6", isstr(ev("cidrhost(\"2001:db8::/64\", 2)", NULL), "2001:db8::2"));
+  check("bi cidrnetmask", isstr(ev("cidrnetmask(\"172.16.0.0/12\")", NULL), "255.240.0.0"));
+  check("bi cidrsubnet v4",
+        isstr(ev("cidrsubnet(\"172.16.0.0/12\", 4, 2)", NULL), "172.18.0.0/16"));
+  check("bi cidrsubnet v4 b",
+        isstr(ev("cidrsubnet(\"10.1.2.0/24\", 4, 15)", NULL), "10.1.2.240/28"));
+  check("bi cidrsubnet v6", isstr(ev("cidrsubnet(\"fd00:fd12:3456:7890::/56\", 16, 162)", NULL),
+                                  "fd00:fd12:3456:7800:a200::/72"));
+  check("bi cidrsubnets len",
+        isnum(ev("length(cidrsubnets(\"10.1.0.0/16\", 4, 4, 8, 4))", NULL), 4));
+  check("bi cidrsubnets[0]",
+        isstr(ev("cidrsubnets(\"10.1.0.0/16\", 4, 4, 8, 4)[0]", NULL), "10.1.0.0/20"));
+  check("bi cidrsubnets[1]",
+        isstr(ev("cidrsubnets(\"10.1.0.0/16\", 4, 4, 8, 4)[1]", NULL), "10.1.16.0/20"));
+  check("bi cidrsubnets[2]",
+        isstr(ev("cidrsubnets(\"10.1.0.0/16\", 4, 4, 8, 4)[2]", NULL), "10.1.32.0/24"));
+  check("bi cidrsubnets[3]",
+        isstr(ev("cidrsubnets(\"10.1.0.0/16\", 4, 4, 8, 4)[3]", NULL), "10.1.48.0/20"));
+  check("bi cidrhost bad prefix", fails("cidrhost(\"10.0.0.0\", 1)", NULL));
+  check("bi cidrnetmask v6 err", fails("cidrnetmask(\"2001:db8::/64\")", NULL));
+  check("bi cidrsubnet overflow", fails("cidrsubnet(\"10.0.0.0/30\", 4, 1)", NULL));
+  /* datetime — Terraform vectors */
+  check("bi timeadd",
+        isstr(ev("timeadd(\"2017-11-22T00:00:00Z\", \"10m\")", NULL), "2017-11-22T00:10:00Z"));
+  check("bi timeadd hour neg",
+        isstr(ev("timeadd(\"2017-11-22T00:00:00Z\", \"-1h30m\")", NULL), "2017-11-21T22:30:00Z"));
+  check("bi timeadd day roll",
+        isstr(ev("timeadd(\"2017-11-22T23:00:00Z\", \"2h\")", NULL), "2017-11-23T01:00:00Z"));
+  check("bi timeadd keeps off", isstr(ev("timeadd(\"2017-11-22T00:00:00-02:00\", \"1h\")", NULL),
+                                      "2017-11-22T01:00:00-02:00"));
+  check("bi timecmp lt",
+        isnum(ev("timecmp(\"2017-11-22T00:00:00Z\", \"2017-11-22T01:00:00Z\")", NULL), -1));
+  check("bi timecmp eq",
+        isnum(ev("timecmp(\"2017-11-22T00:00:00Z\", \"2017-11-22T00:00:00Z\")", NULL), 0));
+  check("bi timecmp gt",
+        isnum(ev("timecmp(\"2017-11-22T00:00:00Z\", \"2017-11-22T00:00:00-01:00\")", NULL), -1));
+  check("bi formatdate",
+        isstr(ev("formatdate(\"DD MMM YYYY hh:mm ZZZ\", \"2018-01-02T23:12:01Z\")", NULL),
+              "02 Jan 2018 23:12 UTC"));
+  check("bi formatdate 12h",
+        isstr(ev("formatdate(\"HH:mmaa\", \"2018-01-02T23:12:01Z\")", NULL), "11:12pm"));
+  check("bi formatdate weekday",
+        isstr(ev("formatdate(\"EEEE, D MMMM YYYY\", \"2018-01-02T00:00:00Z\")", NULL),
+              "Tuesday, 2 January 2018"));
+  check("bi formatdate literal",
+        isstr(ev("formatdate(\"YYYY 'on' MM\", \"2018-01-02T00:00:00Z\")", NULL), "2018 on 01"));
+  check("bi timestamp format",
+        isbool(ev("can(regex(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$\", "
+                  "timestamp()))",
+                  NULL),
+               true));
+  check("bi timeadd bad ts", fails("timeadd(\"nope\", \"1h\")", NULL));
+  check("bi timeadd bad dur", fails("timeadd(\"2017-11-22T00:00:00Z\", \"1x\")", NULL));
+  /* filesystem — lexical path functions (pure) */
+  check("bi dirname", isstr(ev("dirname(\"foo/bar/baz.txt\")", NULL), "foo/bar"));
+  check("bi dirname root", isstr(ev("dirname(\"/foo\")", NULL), "/"));
+  check("bi dirname none", isstr(ev("dirname(\"file\")", NULL), "."));
+  check("bi basename", isstr(ev("basename(\"foo/bar/baz.txt\")", NULL), "baz.txt"));
+  check("bi basename root", isstr(ev("basename(\"/\")", NULL), "/"));
+  check("bi basename trail", isstr(ev("basename(\"a/b/\")", NULL), "b"));
+  check("bi abspath clean", isstr(ev("abspath(\"/a/b/../c/./d\")", NULL), "/a/c/d"));
+  check("bi abspath rel", isbool(ev("startswith(abspath(\"x/y\"), \"/\")", NULL), true));
+  setenv("HOME", "/home/tester", 1);
+  check("bi pathexpand", isstr(ev("pathexpand(\"~/conf\")", NULL), "/home/tester/conf"));
+  check("bi pathexpand tilde", isstr(ev("pathexpand(\"~\")", NULL), "/home/tester"));
+  check("bi pathexpand none", isstr(ev("pathexpand(\"/no/tilde\")", NULL), "/no/tilde"));
+  check("bi pathexpand user err", fails("pathexpand(\"~bob/x\")", NULL));
+  /* file / fileexists / filebase64 against a real temp file */
+  {
+    const char *fp = "/tmp/c-hcl2-fstest.txt";
+    FILE *tf = fopen(fp, "wb");
+    check("fs tmpfile create", tf != NULL);
+    if (tf != NULL) {
+      fwrite("hello\n", 1, 6, tf);
+      fclose(tf);
+    }
+    check("bi file", isstr(ev("file(\"/tmp/c-hcl2-fstest.txt\")", NULL), "hello\n"));
+    check("bi fileexists true", isbool(ev("fileexists(\"/tmp/c-hcl2-fstest.txt\")", NULL), true));
+    check("bi fileexists false",
+          isbool(ev("fileexists(\"/tmp/c-hcl2-nope-xyz.txt\")", NULL), false));
+    check("bi filebase64", isstr(ev("filebase64(\"/tmp/c-hcl2-fstest.txt\")", NULL), "aGVsbG8K"));
+    check("bi file missing", fails("file(\"/tmp/c-hcl2-nope-xyz.txt\")", NULL));
+    check("bi fileexists dir err", fails("fileexists(\"/tmp\")", NULL));
+    remove(fp);
+  }
+  /* fileset — glob walk over a temp directory tree */
+  {
+    mkdir("/tmp/c-hcl2-fset", 0777);
+    mkdir("/tmp/c-hcl2-fset/sub", 0777);
+    const char *files[] = {"/tmp/c-hcl2-fset/a.txt", "/tmp/c-hcl2-fset/b.txt",
+                           "/tmp/c-hcl2-fset/c.log", "/tmp/c-hcl2-fset/sub/d.txt",
+                           "/tmp/c-hcl2-fset/sub/e.log"};
+    for (size_t i = 0; i < 5; i++) {
+      FILE *ff = fopen(files[i], "wb");
+      if (ff != NULL) {
+        fputc('x', ff);
+        fclose(ff);
+      }
+    }
+    check("bi fileset *.txt",
+          isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"*.txt\"))", NULL), 2));
+    check("bi fileset **", isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"**\"))", NULL), 5));
+    check("bi fileset **/*.txt",
+          isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"**/*.txt\"))", NULL), 3));
+    check("bi fileset sub glob",
+          isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"sub/*.log\"))", NULL), 1));
+    check("bi fileset class",
+          isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"[ab].txt\"))", NULL), 2));
+    check("bi fileset brace ext",
+          isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"*.{txt,log}\"))", NULL), 3));
+    check("bi fileset brace names",
+          isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"{a,b,c}.txt\"))", NULL), 2));
+    check("bi fileset brace recursive",
+          isnum(ev("length(fileset(\"/tmp/c-hcl2-fset\", \"**/{d,e}.{txt,log}\"))", NULL), 2));
+    check("bi fileset contains",
+          isbool(ev("contains(fileset(\"/tmp/c-hcl2-fset\", \"**/*.txt\"), \"sub/d.txt\")", NULL),
+                 true));
+    check("bi fileset bad dir", fails("fileset(\"/tmp/c-hcl2-nope-dir-xyz\", \"*\")", NULL));
+    for (size_t i = 0; i < 5; i++)
+      remove(files[i]);
+    remove("/tmp/c-hcl2-fset/sub");
+    remove("/tmp/c-hcl2-fset");
+  }
+  /* templatefile — evaluate a file as an HCL template with bound vars */
+  {
+    const char *tp = "/tmp/c-hcl2-tmpl.txt";
+    FILE *tf = fopen(tp, "wb");
+    if (tf != NULL) {
+      const char *body = "Hi ${upper(name)}, %{ for n in nums ~}${n}.%{ endfor ~}";
+      fwrite(body, 1, strlen(body), tf);
+      fclose(tf);
+    }
+    check("bi templatefile",
+          isstr(ev("templatefile(\"/tmp/c-hcl2-tmpl.txt\", {name = \"bob\", nums = [1, 2, 3]})",
+                   NULL),
+                "Hi BOB, 1.2.3."));
+    remove(tp);
+    /* a template that calls templatefile() recursively must error */
+    const char *rp = "/tmp/c-hcl2-tmpl-rec.txt";
+    FILE *rf = fopen(rp, "wb");
+    if (rf != NULL) {
+      const char *body = "${templatefile(\"x\", {})}";
+      fwrite(body, 1, strlen(body), rf);
+      fclose(rf);
+    }
+    check("bi templatefile no recursion",
+          fails("templatefile(\"/tmp/c-hcl2-tmpl-rec.txt\", {})", NULL));
+    remove(rp);
+    check("bi templatefile bad vars", fails("templatefile(\"/tmp/c-hcl2-nope.txt\", [1])", NULL));
+  }
+  /* yamldecode — block, flow, scalars */
+  check("bi yamldecode map", isstr(ev("yamldecode(\"foo: bar\").foo", NULL), "bar"));
+  check("bi yamldecode num", isnum(ev("yamldecode(\"a: 1\\nb: 2\").b", NULL), 2));
+  check("bi yamldecode seq", isnum(ev("yamldecode(\"list:\\n- 1\\n- 2\\n- 3\").list[1]", NULL), 2));
+  check("bi yamldecode seq len",
+        isnum(ev("length(yamldecode(\"list:\\n- 10\\n- 20\\n- 30\").list)", NULL), 3));
+  check("bi yamldecode nested",
+        isbool(ev("yamldecode(\"nested:\\n  x: true\\n  y: hi\").nested.x", NULL), true));
+  check("bi yamldecode flow seq", isnum(ev("yamldecode(\"[10, 20, 30]\")[2]", NULL), 30));
+  check("bi yamldecode flow map", isnum(ev("yamldecode(\"{a: 1, b: [2, 3]}\").b[0]", NULL), 2));
+  check("bi yamldecode scalar num", isnum(ev("yamldecode(\"42\")", NULL), 42));
+  check("bi yamldecode scalar bool", isbool(ev("yamldecode(\"true\")", NULL), true));
+  check("bi yamldecode scalar str", isstr(ev("yamldecode(\"\\\"hi\\\"\")", NULL), "hi"));
+  check("bi yamldecode null", isbool(ev("yamldecode(\"null\") == null", NULL), true));
+  check("bi yamldecode quoted colon", isstr(ev("yamldecode(\"k: \\\"a: b\\\"\").k", NULL), "a: b"));
+  check("bi yamldecode comment", isnum(ev("yamldecode(\"x: 1 # note\").x", NULL), 1));
+  check(
+      "bi yamldecode seq of maps",
+      isstr(ev("yamldecode(\"items:\\n- name: a\\n  age: 1\\n- name: b\\n  age: 2\").items[1].name",
+               NULL),
+            "b"));
+  check("bi yamldecode bad arg", fails("yamldecode(42)", NULL));
+  /* yamlencode — block style, sorted keys, quoted strings */
+  check("bi yamlencode num", isstr(ev("yamlencode(1)", NULL), "1\n"));
+  check("bi yamlencode str", isstr(ev("yamlencode(\"foo\")", NULL), "\"foo\"\n"));
+  check("bi yamlencode bool", isstr(ev("yamlencode(true)", NULL), "true\n"));
+  check("bi yamlencode seq", isstr(ev("yamlencode([\"a\", \"b\"])", NULL), "- \"a\"\n- \"b\"\n"));
+  check("bi yamlencode map sorted",
+        isstr(ev("yamlencode({b = 2, a = 1})", NULL), "\"a\": 1\n\"b\": 2\n"));
+  check("bi yamlencode seq under key",
+        isstr(ev("yamlencode({foo = \"bar\", baz = [\"qux\"]})", NULL),
+              "\"baz\":\n- \"qux\"\n\"foo\": \"bar\"\n"));
+  check("bi yamlencode nested map",
+        isstr(ev("yamlencode({a = {b = \"c\"}})", NULL), "\"a\":\n  \"b\": \"c\"\n"));
+  check("bi yamlencode empty",
+        isstr(ev("yamlencode({a = [], b = {}})", NULL), "\"a\": []\n\"b\": {}\n"));
+  /* round-trip */
+  check("bi yaml roundtrip", isnum(ev("yamldecode(yamlencode({n = 7})).n", NULL), 7));
+  check("bi yaml roundtrip list",
+        isstr(ev("yamldecode(yamlencode({xs = [\"p\", \"q\"]})).xs[1]", NULL), "q"));
+  /* block scalars: literal | (clip / strip) and folded > */
+  check("bi yaml block literal", isstr(ev("yamldecode(\"k: |\\n  a\\n  b\").k", NULL), "a\nb\n"));
+  check("bi yaml block strip", isstr(ev("yamldecode(\"k: |-\\n  a\\n  b\").k", NULL), "a\nb"));
+  check("bi yaml block folded", isstr(ev("yamldecode(\"k: >\\n  a\\n  b\").k", NULL), "a b\n"));
+  check("bi yaml block in doc",
+        isstr(ev("yamldecode(\"name: x\\nbody: |\\n  l1\\n  l2\\nport: 9\").body", NULL),
+              "l1\nl2\n"));
+  check("bi yaml block sibling",
+        isnum(ev("yamldecode(\"name: x\\nbody: |\\n  l1\\n  l2\\nport: 9\").port", NULL), 9));
+  /* anchors & aliases (&a / *a) and explicit tags (!!str / !!int) */
+  check("bi yaml alias scalar", isnum(ev("yamldecode(\"base: &b 5\\nref: *b\").ref", NULL), 5));
+  check("bi yaml alias coll len",
+        isnum(ev("length(yamldecode(\"defs: &d [1, 2]\\nuse: *d\").use)", NULL), 2));
+  check("bi yaml alias coll val",
+        isnum(ev("yamldecode(\"defs: &d [1, 2]\\nuse: *d\").use[1]", NULL), 2));
+  check("bi yaml anchor block",
+        isnum(ev("yamldecode(\"anchored: &a\\n  x: 1\\nother: *a\").other.x", NULL), 1));
+  check("bi yaml alias in seq", isnum(ev("yamldecode(\"- &i 9\\n- *i\")[1]", NULL), 9));
+  check("bi yaml flow alias", isnum(ev("yamldecode(\"[&x 1, *x]\")[1]", NULL), 1));
+  check("bi yaml undefined alias", fails("yamldecode(\"k: *nope\")", NULL));
+  check("bi yaml tag str", isstr(ev("yamldecode(\"n: !!str 5\").n", NULL), "5"));
+  check("bi yaml tag int", isnum(ev("yamldecode(\"n: !!int \\\"7\\\"\").n", NULL), 7));
+  check("bi yaml tag bool", isbool(ev("yamldecode(\"n: !!bool \\\"true\\\"\").n", NULL), true));
+  /* merge keys (<<) */
+  check("bi yaml merge from",
+        isnum(ev("yamldecode(\"base: &b {x: 1, y: 2}\\nderived:\\n  <<: *b\\n  y: 9\").derived.x",
+                 NULL),
+              1));
+  check("bi yaml merge override",
+        isnum(ev("yamldecode(\"base: &b {x: 1, y: 2}\\nderived:\\n  <<: *b\\n  y: 9\").derived.y",
+                 NULL),
+              9));
+  check("bi yaml merge explicit-before",
+        isnum(ev("yamldecode(\"base: &b {x: 1}\\nd:\\n  x: 5\\n  <<: *b\").d.x", NULL), 5));
+  check(
+      "bi yaml merge seq precedence",
+      isnum(ev("yamldecode(\"a: &a {k: 1}\\nb: &b {k: 2, m: 3}\\nc:\\n  <<: [*a, *b]\").c.k", NULL),
+            1));
+  check(
+      "bi yaml merge seq union",
+      isnum(ev("yamldecode(\"a: &a {k: 1}\\nb: &b {k: 2, m: 3}\\nc:\\n  <<: [*a, *b]\").c.m", NULL),
+            3));
+  check("bi yaml merge bad value", fails("yamldecode(\"k:\\n  <<: 5\")", NULL));
+  /* multi-document streams (beyond Terraform): a tuple of documents */
+  check("bi yaml multidoc len",
+        isnum(ev("length(yamldecode(\"---\\na: 1\\n---\\nb: 2\"))", NULL), 2));
+  check("bi yaml multidoc[0]", isnum(ev("yamldecode(\"---\\na: 1\\n---\\nb: 2\")[0].a", NULL), 1));
+  check("bi yaml multidoc[1]", isnum(ev("yamldecode(\"---\\na: 1\\n---\\nb: 2\")[1].b", NULL), 2));
+  check("bi yaml multidoc no-lead", isnum(ev("yamldecode(\"a: 1\\n---\\nb: 2\")[1].b", NULL), 2));
+  check("bi yaml single still value", isnum(ev("yamldecode(\"a: 1\\n...\").a", NULL), 1));
+  check("bi yaml anchors per-doc scope", fails("yamldecode(\"a: &x 1\\n---\\nb: *x\")", NULL));
   check("bi tostring", isstr(ev("tostring(42)", NULL), "42"));
   check("bi tonumber", isnum(ev("tonumber(\"3.5\")", NULL), 3.5));
   check("bi tobool", isbool(ev("tobool(\"true\")", NULL), true));
@@ -1202,7 +1636,11 @@ int main(void) {
     /* index trailer inside the splat: [*].a[0] maps per element -> [10, 30] */
     check("splat index trailer",
           isstr(ev("jsonencode([{a = [10, 20]}, {a = [30, 40]}][*].a[0])", NULL), "[10,30]"));
-    check("splat chained err", fails("people[*][*]", ctx));
+    /* chained splats now parse + evaluate as a nested splat per element */
+    check("splat chained list",
+          isstr(ev("jsonencode([[1, 2], [3, 4]][*][*])", NULL), "[[1,2],[3,4]]"));
+    check("splat chained len", isnum(ev("length([[1, 2], [3, 4]][*][*])", NULL), 2));
+    check("splat chained attr", isstr(ev("jsonencode(people.*.*)", ctx), "[[\"ada\"],[\"alan\"]]"));
     /* loop var does not leak into the surrounding scope */
     check("for scope clean", fails("[for z in [1] : z][0] + z", ctx));
     hcl2_ctx_free(ctx);
