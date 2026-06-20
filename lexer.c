@@ -149,6 +149,10 @@ static void lex_heredoc(struct lexer *l, bool indented) {
 }
 
 void lex(struct lexer *l) {
+  /* The previous token ended where the scanner currently sits (before we skip
+     intervening whitespace/comments): record it so nodes can carry an end
+     span. */
+  l->prevend = l->p;
   /* Skip whitespace and comments between tokens: '#' and '//' line comments,
      and '/' '*' ... '*' '/' block comments. */
   for (;;) {

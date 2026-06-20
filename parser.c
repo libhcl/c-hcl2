@@ -43,6 +43,19 @@ static void stamp(struct parser *p, struct node *x, const char *pos) {
   if (x != NULL)
     lx_linecol(&p->lx, pos, &x->line, &x->col);
 }
+/* Record the node's end span: the position just past its last consumed token
+ * (the lexer's prevend after that token was lexed). */
+static void stamp_end(struct parser *p, struct node *x) {
+  if (x != NULL)
+    lx_linecol(&p->lx, p->lx.prevend, &x->endline, &x->endcol);
+}
+/* Inherit the end span of a (rightmost) child node. */
+static void end_copy(struct node *x, const struct node *from) {
+  if (x != NULL && from != NULL) {
+    x->endline = from->endline;
+    x->endcol = from->endcol;
+  }
+}
 
 /* ===========================================================================
  * Parser (Pratt) -- struct parser lives in hcl2_internal.h
@@ -62,7 +75,8 @@ static bool kw(struct lexer *l, const char *w) {
  * `{for k => v}` form over the `[for v]` tuple form. */
 static struct node *parse_for(struct parser *p, bool object) {
   struct lexer *l = &p->lx;
-  lex(l); /* consume 'for' */
+  const char *forpos = l->tokpos; /* the 'for' keyword, for the span start */
+  lex(l);                         /* consume 'for' */
   if (l->tok != T_IDENT)
     PERR(p, "expected a variable name after 'for'");
   char *v1 = strdup(l->text);
@@ -110,6 +124,7 @@ static struct node *parse_for(struct parser *p, bool object) {
     return NULL;
   }
   f->a = coll;
+  stamp(p, f, forpos);
   /* one var -> value var; two vars -> key var, value var */
   if (v2 != NULL) {
     f->kvar = v1;
@@ -153,6 +168,7 @@ static struct node *parse_for(struct parser *p, bool object) {
                    : "expected ']' to close for-expression");
   }
   lex(l); /* consume closing bracket */
+  stamp_end(p, f);
   return f;
 }
 
@@ -160,15 +176,19 @@ static struct node *parse_primary(struct parser *p) {
   struct lexer *l = &p->lx;
   switch (l->tok) {
   case T_NUM: {
+    const char *pos = l->tokpos;
     struct node *x = nnew(N_LIT);
     if (!x)
       return NULL;
     x->lit = hcl2_number(strtod(l->text, NULL));
+    stamp(p, x, pos);
     lex(l);
+    stamp_end(p, x);
     return x;
   }
   case T_STR:
   case T_HEREDOC: {
+    const char *pos = l->tokpos;
     struct node *x = nnew(N_TEMPLATE);
     if (!x)
       return NULL;
@@ -178,24 +198,32 @@ static struct node *parse_primary(struct parser *p) {
       node_free(x);
       return NULL;
     }
+    stamp(p, x, pos);
     lex(l);
+    stamp_end(p, x);
     return x;
   }
   case T_IDENT: {
     if (strcmp(l->text, "true") == 0 || strcmp(l->text, "false") == 0) {
+      const char *pos = l->tokpos;
       struct node *x = nnew(N_LIT);
       if (!x)
         return NULL;
       x->lit = hcl2_bool(l->text[0] == 't');
+      stamp(p, x, pos);
       lex(l);
+      stamp_end(p, x);
       return x;
     }
     if (strcmp(l->text, "null") == 0) {
+      const char *pos = l->tokpos;
       struct node *x = nnew(N_LIT);
       if (!x)
         return NULL;
       x->lit = hcl2_null();
+      stamp(p, x, pos);
       lex(l);
+      stamp_end(p, x);
       return x;
     }
     const char *idpos = l->tokpos; /* position of the identifier */
@@ -242,6 +270,7 @@ static struct node *parse_primary(struct parser *p) {
         PERR(p, "expected ')' after arguments");
       }
       lex(l);
+      stamp_end(p, x);
       return x;
     }
     struct node *x = nnew(N_VAR);
@@ -251,6 +280,7 @@ static struct node *parse_primary(struct parser *p) {
     }
     x->str = name;
     stamp(p, x, idpos);
+    stamp_end(p, x);
     return x;
   }
   case T_LP: {
@@ -266,12 +296,14 @@ static struct node *parse_primary(struct parser *p) {
     return e;
   }
   case T_LB: { /* tuple or [for ...] */
+    const char *pos = l->tokpos;
     lex(l);
     if (kw(l, "for"))
       return parse_for(p, false);
     struct node *x = nnew(N_TUPLE);
     if (!x)
       return NULL;
+    stamp(p, x, pos);
     while (l->tok != T_RB) {
       struct node *e = parse_expr(p);
       if (e == NULL) {
@@ -297,15 +329,18 @@ static struct node *parse_primary(struct parser *p) {
       PERR(p, "expected ']' in tuple");
     }
     lex(l);
+    stamp_end(p, x);
     return x;
   }
   case T_LC: { /* object or {for ...} */
+    const char *pos = l->tokpos;
     lex(l);
     if (kw(l, "for"))
       return parse_for(p, true);
     struct node *x = nnew(N_OBJECT);
     if (!x)
       return NULL;
+    stamp(p, x, pos);
     while (l->tok != T_RC) {
       if (l->tok != T_IDENT && l->tok != T_STR) {
         node_free(x);
@@ -358,6 +393,7 @@ static struct node *parse_primary(struct parser *p) {
       /* allow newline-separated (already skipped as whitespace) */
     }
     lex(l);
+    stamp_end(p, x);
     return x;
   }
   default:
@@ -386,9 +422,17 @@ static struct node *build_splat(struct parser *p, struct node *coll) {
   for (;;) {
     if (l->tok == T_DOT) {
       lex(l);
+      if (l->tok == T_STAR) { /* chained attribute splat: .*.* */
+        lex(l);
+        body = build_splat(p, body); /* takes ownership of body, frees on error */
+        if (body == NULL) {
+          node_free(coll);
+          return NULL;
+        }
+        continue;
+      }
       if (l->tok != T_IDENT) {
-        lx_err(l, l->tok == T_STAR ? "chained splat is not supported"
-                                   : "expected attribute name after '.' in splat");
+        lx_err(l, "expected attribute name after '.' in splat");
         node_free(body);
         node_free(coll);
         return NULL;
@@ -410,11 +454,21 @@ static struct node *build_splat(struct parser *p, struct node *coll) {
       lex(l);
     } else if (l->tok == T_LB) {
       lex(l);
-      if (l->tok == T_STAR) {
-        lx_err(l, "chained splat is not supported");
-        node_free(body);
-        node_free(coll);
-        return NULL;
+      if (l->tok == T_STAR) { /* chained full splat: [*][*] */
+        lex(l);
+        if (l->tok != T_RB) {
+          lx_err(l, "expected ']' after '[*]'");
+          node_free(body);
+          node_free(coll);
+          return NULL;
+        }
+        lex(l);
+        body = build_splat(p, body); /* takes ownership of body, frees on error */
+        if (body == NULL) {
+          node_free(coll);
+          return NULL;
+        }
+        continue;
       }
       struct node *idx = parse_expr(p);
       if (idx == NULL) {
@@ -457,6 +511,10 @@ static struct node *build_splat(struct parser *p, struct node *coll) {
     node_free(f);
     return NULL;
   }
+  end_copy(f, coll); /* fallback start/end from the collection */
+  f->line = coll->line;
+  f->col = coll->col;
+  stamp_end(p, f);
   return f;
 }
 
@@ -493,6 +551,7 @@ static struct node *parse_postfix(struct parser *p) {
       }
       stamp(p, x, dotpos);
       lex(l);
+      stamp_end(p, x);
       e = x;
     } else if (l->tok == T_LB) {
       const char *lbpos = l->tokpos;
@@ -529,6 +588,7 @@ static struct node *parse_postfix(struct parser *p) {
       x->a = e;
       x->b = idx;
       stamp(p, x, lbpos);
+      stamp_end(p, x);
       e = x;
     } else {
       break;
@@ -554,6 +614,7 @@ static struct node *parse_unary(struct parser *p) {
     x->op = op;
     x->a = e;
     stamp(p, x, oppos);
+    end_copy(x, e);
     return x;
   }
   return parse_postfix(p);
@@ -612,6 +673,7 @@ static struct node *parse_binary(struct parser *p, int minbp) {
     x->a = left;
     x->b = right;
     stamp(p, x, oppos);
+    end_copy(x, right);
     left = x;
   }
   return left;
@@ -651,7 +713,47 @@ struct node *parse_expr(struct parser *p) {
     x->a = e;
     x->b = a;
     x->c = b;
+    x->line = e->line;
+    x->col = e->col;
+    end_copy(x, b);
     return x;
   }
   return e;
+}
+
+bool hcl2_expr_span(const char *src, size_t len, int *start_line, int *start_col, int *end_line,
+                    int *end_col, char *err, size_t errsz) {
+  if (err && errsz)
+    err[0] = '\0';
+  struct parser p = {0};
+  p.lx.p = src;
+  p.lx.end = src + len;
+  p.lx.start = src;
+  p.lx.tokpos = src;
+  p.lx.err = err;
+  p.lx.errsz = errsz;
+  lex(&p.lx);
+  struct node *root = parse_expr(&p);
+  if (root == NULL) {
+    free(p.lx.text);
+    everr(err, errsz, "parse error");
+    return false;
+  }
+  if (p.lx.tok != T_EOF) {
+    node_free(root);
+    free(p.lx.text);
+    everr(err, errsz, "trailing tokens after expression");
+    return false;
+  }
+  if (start_line)
+    *start_line = root->line;
+  if (start_col)
+    *start_col = root->col;
+  if (end_line)
+    *end_line = root->endline;
+  if (end_col)
+    *end_col = root->endcol;
+  node_free(root);
+  free(p.lx.text);
+  return true;
 }

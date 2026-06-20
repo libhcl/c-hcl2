@@ -134,6 +134,13 @@ bool hcl2_ctx_set_func(hcl2_ctx *ctx, const char *name, hcl2_func fn);
  * builtins only). Returns an owned value, or NULL on error (message in err). */
 hcl2_value *hcl2_eval(const char *src, size_t len, hcl2_ctx *ctx, char *err, size_t errsz);
 
+/* Parse a single expression and report its source span without evaluating it.
+ * Positions are 1-based; the start is the first token and the end is exclusive
+ * (the position just past the last token). Any of the out pointers may be NULL.
+ * Returns false on a parse error (message in err). */
+bool hcl2_expr_span(const char *src, size_t len, int *start_line, int *start_col, int *end_line,
+                    int *end_col, char *err, size_t errsz);
+
 /* --- JSON profile (M5, in progress) ---
  * Parse a JSON document into the value model: object -> object, array -> tuple,
  * string -> string (literal, NOT an HCL template), number -> number,

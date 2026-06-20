@@ -87,8 +87,9 @@ enum tok {
 };
 struct lexer {
   const char *p, *end;
-  const char *start;  /* source begin, for line/column diagnostics */
-  const char *tokpos; /* start of the current token, for error positions */
+  const char *start;   /* source begin, for line/column diagnostics */
+  const char *tokpos;  /* start of the current token, for error positions */
+  const char *prevend; /* end of the previously consumed token (span ends) */
   enum tok tok;
   char *text; /* T_NUM/T_IDENT/T_STR (raw inner for strings); owned, reused */
   size_t tlen;
@@ -127,7 +128,8 @@ struct node {
   struct node **items; /* N_TUPLE / N_CALL args / N_OBJECT vals */
   char **keys;         /* N_OBJECT keys */
   size_t n;
-  int line, col; /* source position for eval-error diagnostics (0 = unknown) */
+  int line, col;       /* source span start (1-based; 0 = unknown) */
+  int endline, endcol; /* source span end, exclusive (1-based; 0 = unknown) */
 };
 struct parser {
   struct lexer lx;

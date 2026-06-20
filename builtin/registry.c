@@ -1,0 +1,121 @@
+#include <ctype.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "hcl2.h"
+#include "hcl2_alloc.h"
+#include "hcl2_internal.h"
+
+#include "builtin.h"
+
+hcl2_func builtin_func(const char *name) {
+  static const struct {
+    const char *name;
+    hcl2_func fn;
+  } table[] = {
+      {"length",          bi_length         },
+      {"upper",           bi_upper          },
+      {"lower",           bi_lower          },
+      {"min",             bi_min            },
+      {"max",             bi_max            },
+      {"join",            bi_join           },
+      {"split",           bi_split          },
+      {"abs",             bi_abs            },
+      {"floor",           bi_floor          },
+      {"ceil",            bi_ceil           },
+      {"signum",          bi_signum         },
+      {"log",             bi_log            },
+      {"pow",             bi_pow            },
+      {"parseint",        bi_parseint       },
+      {"chomp",           bi_chomp          },
+      {"trim",            bi_trim           },
+      {"trimspace",       bi_trimspace      },
+      {"trimprefix",      bi_trimprefix     },
+      {"trimsuffix",      bi_trimsuffix     },
+      {"startswith",      bi_startswith     },
+      {"endswith",        bi_endswith       },
+      {"indent",          bi_indent         },
+      {"substr",          bi_substr         },
+      {"strrev",          bi_strrev         },
+      {"title",           bi_title          },
+      {"replace",         bi_replace        },
+      {"element",         bi_element        },
+      {"slice",           bi_slice          },
+      {"reverse",         bi_reverse        },
+      {"sum",             bi_sum            },
+      {"range",           bi_range          },
+      {"sort",            bi_sort           },
+      {"distinct",        bi_distinct       },
+      {"compact",         bi_compact        },
+      {"flatten",         bi_flatten        },
+      {"index",           bi_index          },
+      {"one",             bi_one            },
+      {"alltrue",         bi_alltrue        },
+      {"anytrue",         bi_anytrue        },
+      {"coalescelist",    bi_coalescelist   },
+      {"merge",           bi_merge          },
+      {"zipmap",          bi_zipmap         },
+      {"chunklist",       bi_chunklist      },
+      {"matchkeys",       bi_matchkeys      },
+      {"tolist",          bi_tolist         },
+      {"toset",           bi_toset          },
+      {"tomap",           bi_tomap          },
+      {"setunion",        bi_setunion       },
+      {"setintersection", bi_setintersection},
+      {"setsubtract",     bi_setsubtract    },
+      {"setproduct",      bi_setproduct     },
+      {"transpose",       bi_transpose      },
+      {"format",          bi_format         },
+      {"formatlist",      bi_formatlist     },
+      {"csvdecode",       bi_csvdecode      },
+      {"regex",           bi_regex          },
+      {"regexall",        bi_regexall       },
+      {"base64encode",    bi_base64encode   },
+      {"base64decode",    bi_base64decode   },
+      {"md5",             bi_md5            },
+      {"sha1",            bi_sha1           },
+      {"sha256",          bi_sha256         },
+      {"sha512",          bi_sha512         },
+      {"base64sha256",    bi_base64sha256   },
+      {"base64sha512",    bi_base64sha512   },
+      {"uuidv5",          bi_uuidv5         },
+      {"uuid",            bi_uuid           },
+      {"cidrhost",        bi_cidrhost       },
+      {"cidrnetmask",     bi_cidrnetmask    },
+      {"cidrsubnet",      bi_cidrsubnet     },
+      {"cidrsubnets",     bi_cidrsubnets    },
+      {"timestamp",       bi_timestamp      },
+      {"plantimestamp",   bi_plantimestamp  },
+      {"timeadd",         bi_timeadd        },
+      {"timecmp",         bi_timecmp        },
+      {"formatdate",      bi_formatdate     },
+      {"abspath",         bi_abspath        },
+      {"dirname",         bi_dirname        },
+      {"basename",        bi_basename       },
+      {"pathexpand",      bi_pathexpand     },
+      {"file",            bi_file           },
+      {"fileexists",      bi_fileexists     },
+      {"filebase64",      bi_filebase64     },
+      {"fileset",         bi_fileset        },
+      {"templatefile",    bi_templatefile   },
+      {"yamldecode",      bi_yamldecode     },
+      {"yamlencode",      bi_yamlencode     },
+      {"concat",          bi_concat         },
+      {"keys",            bi_keys           },
+      {"values",          bi_values         },
+      {"contains",        bi_contains       },
+      {"lookup",          bi_lookup         },
+      {"coalesce",        bi_coalesce       },
+      {"tostring",        bi_tostring       },
+      {"tonumber",        bi_tonumber       },
+      {"tobool",          bi_tobool         },
+      {"jsondecode",      bi_jsondecode     },
+      {"jsonencode",      bi_jsonencode     },
+  };
+  for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+    if (strcmp(table[i].name, name) == 0)
+      return table[i].fn;
+  return NULL;
+}

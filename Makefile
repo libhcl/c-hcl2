@@ -1,5 +1,5 @@
 PREFIX ?= /usr/local
-CFLAGS ?= -O2 -Wall -Wextra -pedantic
+CFLAGS ?= -O2 -Wall -Wextra -pedantic -I.
 LDLIBS ?= -lm
 
 SANITIZE ?=
@@ -11,12 +11,12 @@ TEST_CFLAGS += -fsanitize=$(SANITIZE)
 endif
 COVER_CFLAGS = $(TEST_CFLAGS) -fprofile-instr-generate -fcoverage-mapping
 
-SRCS := value.c lexer.c parser.c eval.c body.c convert.c json.c json_body.c builtins.c
+SRCS := value.c lexer.c parser.c eval.c body.c convert.c json.c json_body.c $(wildcard builtin/*.c)
 OBJS := $(SRCS:.c=.o)
 
 all: libhcl2.a
 
-%.o: %.c hcl2.h hcl2_internal.h
+%.o: %.c hcl2.h hcl2_internal.h builtin/builtin.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 libhcl2.a: $(OBJS)
@@ -24,7 +24,7 @@ libhcl2.a: $(OBJS)
 
 .PHONY: fmt
 fmt:
-	clang-format -i $(SRCS) hcl2.h hcl2_internal.h test/*.c
+	clang-format -i $(SRCS) hcl2.h hcl2_internal.h builtin/builtin.h test/*.c
 
 .PHONY: test
 test:
@@ -55,5 +55,5 @@ install: libhcl2.a
 
 .PHONY: clean
 clean:
-	rm -f *.o *.a test/hcl2_test test/fuzz *.profraw *.profdata
+	rm -f *.o builtin/*.o *.a test/hcl2_test test/fuzz *.profraw *.profdata
 	rm -rf *.dSYM test/*.dSYM
